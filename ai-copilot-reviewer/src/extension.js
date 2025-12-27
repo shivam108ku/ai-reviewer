@@ -590,35 +590,68 @@ class ChatViewProvider {
 /**
  * Handle chat messages with Gemini API
  */
+ /**
+ * Handle chat messages with Gemini API - FIXED CONTEXT
+ */
+ /**
+ * Handle chat messages with Gemini API - FIXED FORMATTING
+ */
 async function handleChatMessage(message, webview) {
-    conversationHistory.push({ role: 'user', parts: [{ text: message }] });
-
     try {
         const apiKey = await getApiKey();
         
         if (!apiKey) {
-            webview.postMessage({ type: 'error', text: 'API Key not set! Please provide your Gemini API key.' });
+            webview.postMessage({ type: 'error', text: 'API Key not set!' });
             return;
         }
 
-        const editor = vscode.window.activeTextEditor;
-        let contextPrompt = message;
+        let fullPrompt = message;
         
-        if (editor && editor.document) {
-            const fileName = editor.document.fileName.split(/[\\/]/).pop();
-            const language = editor.document.languageId;
-            const selection = editor.selection;
-            const selectedText = !selection.isEmpty ? editor.document.getText(selection) : editor.document.getText();
-            contextPrompt = `Context: File ${fileName} (${language})\nCode:\n${selectedText}\n\nUser Question: ${message}`;
+        // Only add context if user mentions "file", "code", "current", etc.
+        const needsContext = /\b(file|code|current|this|review|analyze|fix|refactor)\b/i.test(message);
+        
+        if (needsContext) {
+            const editor = vscode.window.activeTextEditor;
+            
+            if (editor && editor.document) {
+                const fileName = editor.document.fileName.split(/[\\/]/).pop();
+                const language = editor.document.languageId;
+                const selection = editor.selection;
+                const codeContext = !selection.isEmpty 
+                    ? editor.document.getText(selection) 
+                    : editor.document.getText();
+                
+                fullPrompt = `File: ${fileName} (${language})
+
+Code:
+\`\`\`${language}
+${codeContext}
+\`\`\`
+
+Question: ${message}`;
+            }
         }
 
+        conversationHistory.push({ 
+            role: 'user', 
+            parts: [{ text: fullPrompt }] 
+        });
+
         const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
             {
-                contents: conversationHistory.slice(-6).map(msg => ({
-                    role: msg.role === 'assistant' ? 'model' : 'user',
-                    parts: msg.parts
-                })),
+                contents: [
+                    {
+                        role: 'user',
+                        parts: [{ 
+                            text: 'You are a helpful coding assistant. IMPORTANT: Do NOT use markdown formatting symbols like *, **, #, or ###. Use plain text only. For emphasis, use CAPITAL LETTERS. For code, use triple backticks (```
+                        }]
+                    },
+                    ...conversationHistory.slice(-6).map(msg => ({
+                        role: msg.role === 'assistant' ? 'model' : 'user',
+                        parts: msg.parts
+                    }))
+                ],
                 generationConfig: {
                     temperature: 0.3,
                     maxOutputTokens: 2048,
@@ -626,16 +659,30 @@ async function handleChatMessage(message, webview) {
             }
         );
 
-        const aiText = response.data.candidates[0].content.parts[0].text;
+        let aiText = response.data.candidates.content.parts.text;
+        
+        // Clean up markdown symbols from response
+        aiText = aiText
+            .replace(/\*\*\*(.+?)\*\*\*/g, '$1')  // Remove bold+italic ***text***
+            .replace(/\*\*(.+?)\*\*/g, '$1')      // Remove bold **text**
+            .replace(/\*(.+?)\*/g, '$1')          // Remove italic *text*
+            .replace(/^#{1,6}\s+/gm, '')          // Remove # headers
+            .replace(/^[-*+]\s+/gm, '- ');        // Keep bullet points clean
+        
         conversationHistory.push({ role: 'assistant', parts: [{ text: aiText }] });
         
         webview.postMessage({ type: 'aiResponse', text: aiText });
 
     } catch (error) {
         console.error('Gemini API Error:', error.response?.data || error.message);
-        webview.postMessage({ type: 'error', text: 'AI request failed: ' + (error.response?.data?.error?.message || error.message) });
+        webview.postMessage({ 
+            type: 'error', 
+            text: 'AI request failed: ' + (error.response?.data?.error?.message || error.message) 
+        });
     }
 }
+
+
 
 function openChatPanel(context) {
     vscode.commands.executeCommand('workbench.view.extension.ai-copilot-panel');
@@ -689,7 +736,7 @@ async function reviewCode(document, code, startLine) {
             if (!apiKey) return;
 
             const response = await axios.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
                 {
                     contents: [{
                         parts: [{
@@ -735,7 +782,7 @@ async function reviewCode(document, code, startLine) {
             }
 
         } catch (error) {
-            vscode.window.showErrorMessage('❌ Review failed!');
+            vscode.window.showErrorMessage('❌ Review failed: ' + (error.response?.data?.error?.message || error.message));
         }
     });
 }
@@ -825,7 +872,7 @@ async function callAI(prompt) {
         if (!apiKey) return null;
 
         const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
             {
                 contents: [{
                     parts: [{ text: prompt }]
@@ -839,7 +886,7 @@ async function callAI(prompt) {
 
         return response.data.candidates[0].content.parts[0].text;
     } catch (error) {
-        vscode.window.showErrorMessage('❌ AI request failed!');
+        vscode.window.showErrorMessage('❌ AI request failed: ' + (error.response?.data?.error?.message || error.message));
         return null;
     }
 }
