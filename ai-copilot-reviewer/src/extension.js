@@ -598,46 +598,31 @@ class ChatViewProvider {
 /**
  * Handle chat messages with streaming
  */
-async function handleChatMessage(message, webview) {
+ async function handleChatMessage(message, webview) {
     conversationHistory.push({ role: 'user', content: message });
-
 
     try {
         const config = vscode.workspace.getConfiguration('aiCopilotReviewer');
-        const apiKey = process.env.DEEPSEEK_API_KEY || config.get('apiKey');
-
+        const apiKey = config.get('apiKey');
 
         if (!apiKey) {
             webview.postMessage({ type: 'error', text: 'API Key not set! Go to Settings.' });
             return;
         }
 
-
-        // Get current editor context
         const editor = vscode.window.activeTextEditor;
         let contextPrompt = message;
         
         if (editor && editor.document) {
-            const fileName = editor.document.fileName.split('\\').pop();
+            const fileName = editor.document.fileName.split(/[\\/]/).pop();
             const language = editor.document.languageId;
             const selection = editor.selection;
-            
-            if (!selection.isEmpty) {
-                const selectedText = editor.document.getText(selection);
-                contextPrompt = `I'm working on a ${language} file (${fileName}). Here's my selected code:\n\n\`\`\`${language}\n${selectedText}\n\`\`\`\n\nUser question: ${message}`;
-            } else {
-                const fullText = editor.document.getText();
-                const truncatedText = fullText.length > 3000 ? fullText.substring(0, 3000) + '\n... (truncated)' : fullText;
-                contextPrompt = `I'm working on ${fileName} (${language}):\n\n\`\`\`${language}\n${truncatedText}\n\`\`\`\n\nUser question: ${message}`;
-            }
+            const selectedText = !selection.isEmpty ? editor.document.getText(selection) : editor.document.getText();
+            contextPrompt = `Context: File ${fileName} (${language})\nCode:\n${selectedText}\n\nUser Question: ${message}`;
         }
 
-
-        // Create AbortController for cancellation
         currentStreamController = new AbortController();
 
-
-        // Stream response
         const response = await axios.post(
             'https://api.deepseek.com/v1/chat/completions',
             {
@@ -645,92 +630,50 @@ async function handleChatMessage(message, webview) {
                 messages: [
                     {
                         role: 'system',
-                        content: 'You are an expert programming assistant like GitHub Copilot. You help with code review, debugging, explanations, and suggestions. Be concise, practical, and always format code in markdown code blocks always check to do not wrte this # and * in our oupt put use when needed.'
+                        content: 'You are a plain-text programming assistant. NEVER use hashtags (#) for headers or asterisks (*) for bold/lists. Use CAPITAL LETTERS for headers and dashes (-) for lists. Use code blocks (```) ONLY for actual code snippets. Output only clean text.'
                     },
                     ...conversationHistory.slice(-6),
-                    {
-                        role: 'user',
-                        content: contextPrompt
-                    }
+                    { role: 'user', content: contextPrompt }
                 ],
                 temperature: 0.3,
-                max_tokens: 2000,
                 stream: true
             },
             {
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Authorization': `Bearer ${apiKey}` },
                 responseType: 'stream',
-                timeout: 30000,
                 signal: currentStreamController.signal
             }
         );
 
-
         let fullResponse = '';
         
         response.data.on('data', (chunk) => {
-            const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
+            const lines = chunk.toString().split('\n');
             for (const line of lines) {
-                if (line.includes('[DONE]')) {
-                    webview.postMessage({ type: 'aiStreamEnd' });
-                    currentStreamController = null;
-                    continue;
-                }
-                
-                const message = line.replace(/^data: /, '');
-                if (message) {
+                if (line.includes('[DONE]')) continue;
+                if (line.startsWith('data: ')) {
                     try {
-                        const parsed = JSON.parse(message);
+                        const parsed = JSON.parse(line.replace('data: ', ''));
                         const content = parsed.choices[0]?.delta?.content;
                         if (content) {
-                            fullResponse += content;
+                            // Secondary filter to strip remaining symbols from the stream
+                            const filteredContent = content.replace(/[#*]/g, '');
+                            fullResponse += filteredContent;
                             webview.postMessage({ type: 'aiStreamChunk', text: fullResponse });
                         }
-                    } catch (e) {
-                        // Skip parsing errors
-                    }
+                    } catch (e) {}
                 }
             }
         });
-
 
         response.data.on('end', () => {
             conversationHistory.push({ role: 'assistant', content: fullResponse });
             webview.postMessage({ type: 'aiStreamEnd' });
-            currentStreamController = null;
         });
-
-
-        response.data.on('error', (error) => {
-            console.error('Stream error:', error);
-            if (error.name !== 'CanceledError') {
-                webview.postMessage({ type: 'error', text: 'Stream error occurred' });
-            }
-            currentStreamController = null;
-        });
-
 
     } catch (error) {
-        if (axios.isCancel(error) || error.code === 'ERR_CANCELED') {
-            console.log('Request was cancelled by user');
-            return;
-        }
-
-
-        console.error('AI Error:', error.response?.data || error.message);
-        
-        let errorMsg = 'Failed to get response from AI.';
-        if (error.response?.status === 401) {
-            errorMsg = 'Invalid API Key! Check settings.';
-        } else if (error.response?.status === 429) {
-            errorMsg = 'Rate limit exceeded. Wait a moment.';
-        }
-        
-        webview.postMessage({ type: 'error', text: errorMsg });
-        currentStreamController = null;
+        if (error.name === 'AbortError') return;
+        webview.postMessage({ type: 'error', text: 'AI request failed.' });
     }
 }
 
