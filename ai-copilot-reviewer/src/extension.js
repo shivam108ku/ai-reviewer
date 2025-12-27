@@ -1,8 +1,9 @@
-const vscode = require('vscode');
-const axios = require('axios');
+const vscode = require("vscode");
+const axios = require("axios");
 
 // Global state
-const diagnosticCollection = vscode.languages.createDiagnosticCollection('ai-copilot');
+const diagnosticCollection =
+  vscode.languages.createDiagnosticCollection("ai-copilot");
 let statusBarItem;
 let outputChannel;
 let chatPanel;
@@ -10,125 +11,157 @@ let conversationHistory = [];
 let currentStreamController = null;
 
 function activate(context) {
-    console.log('🤖 AI Copilot activated!');
+  console.log("🤖 AI Copilot activated!");
 
-    outputChannel = vscode.window.createOutputChannel('AI Copilot');
-    outputChannel.appendLine('✅ AI Copilot is ready!');
+  outputChannel = vscode.window.createOutputChannel("AI Copilot");
+  outputChannel.appendLine("✅ AI Copilot is ready!");
 
-    // Status bar
-    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    statusBarItem.text = "$(sparkle) AI Copilot";
-    statusBarItem.tooltip = "Click to open AI Chat";
-    statusBarItem.command = 'aiCopilotReviewer.openChat';
-    statusBarItem.show();
+  // Status bar
+  statusBarItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100
+  );
+  statusBarItem.text = "$(sparkle) AI Copilot";
+  statusBarItem.tooltip = "Click to open AI Chat";
+  statusBarItem.command = "aiCopilotReviewer.openChat";
+  statusBarItem.show();
 
-    // Register commands
-    context.subscriptions.push(
-        vscode.commands.registerCommand('aiCopilotReviewer.openChat', () => openChatPanel(context)),
-        vscode.commands.registerCommand('aiCopilotReviewer.reviewFile', reviewCurrentFile),
-        vscode.commands.registerCommand('aiCopilotReviewer.reviewSelection', reviewSelectedCode),
-        vscode.commands.registerCommand('aiCopilotReviewer.explainCode', explainCode),
-        vscode.commands.registerCommand('aiCopilotReviewer.fixCode', fixCode),
-        vscode.commands.registerCommand('aiCopilotReviewer.generateTests', generateTests),
-        vscode.commands.registerCommand('aiCopilotReviewer.refactorCode', refactorCode),
-        vscode.commands.registerCommand('aiCopilotReviewer.clearDiagnostics', () => {
-            diagnosticCollection.clear();
-            vscode.window.showInformationMessage('🗑️ Reviews cleared!');
-        })
-    );
+  // Register commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand("aiCopilotReviewer.openChat", () =>
+      openChatPanel(context)
+    ),
+    vscode.commands.registerCommand(
+      "aiCopilotReviewer.reviewFile",
+      reviewCurrentFile
+    ),
+    vscode.commands.registerCommand(
+      "aiCopilotReviewer.reviewSelection",
+      reviewSelectedCode
+    ),
+    vscode.commands.registerCommand(
+      "aiCopilotReviewer.explainCode",
+      explainCode
+    ),
+    vscode.commands.registerCommand("aiCopilotReviewer.fixCode", fixCode),
+    vscode.commands.registerCommand(
+      "aiCopilotReviewer.generateTests",
+      generateTests
+    ),
+    vscode.commands.registerCommand(
+      "aiCopilotReviewer.refactorCode",
+      refactorCode
+    ),
+    vscode.commands.registerCommand(
+      "aiCopilotReviewer.clearDiagnostics",
+      () => {
+        diagnosticCollection.clear();
+        vscode.window.showInformationMessage("🗑️ Reviews cleared!");
+      }
+    )
+  );
 
-    // Auto-review on save
-    context.subscriptions.push(
-        vscode.workspace.onDidSaveTextDocument(async (doc) => {
-            const config = vscode.workspace.getConfiguration('aiCopilotReviewer');
-            if (config.get('reviewOnSave')) {
-                await reviewDocument(doc);
-            }
-        })
-    );
+  // Auto-review on save
+  context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument(async (doc) => {
+      const config = vscode.workspace.getConfiguration("aiCopilotReviewer");
+      if (config.get("reviewOnSave")) {
+        await reviewDocument(doc);
+      }
+    })
+  );
 
-    // Register webview provider
-    context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider('aiCopilotChat', new ChatViewProvider(context.extensionUri))
-    );
+  // Register webview provider
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      "aiCopilotChat",
+      new ChatViewProvider(context.extensionUri)
+    )
+  );
 
-    context.subscriptions.push(diagnosticCollection, statusBarItem, outputChannel);
+  context.subscriptions.push(
+    diagnosticCollection,
+    statusBarItem,
+    outputChannel
+  );
 }
 
 /**
  * Get API key from user input
  */
 async function getApiKey() {
-    const config = vscode.workspace.getConfiguration('aiCopilotReviewer');
-    let apiKey = config.get('apiKey');
-    
+  const config = vscode.workspace.getConfiguration("aiCopilotReviewer");
+  let apiKey = config.get("apiKey");
+
+  if (!apiKey) {
+    apiKey = await vscode.window.showInputBox({
+      prompt: "Enter your Google Gemini API Key",
+      placeHolder: "AIzaSy...",
+      password: true,
+      ignoreFocusOut: true,
+      validateInput: (value) => {
+        return value.trim().length === 0 ? "API Key cannot be empty" : null;
+      },
+    });
+
     if (!apiKey) {
-        apiKey = await vscode.window.showInputBox({
-            prompt: 'Enter your Google Gemini API Key',
-            placeHolder: 'AIzaSy...',
-            password: true,
-            ignoreFocusOut: true,
-            validateInput: (value) => {
-                return value.trim().length === 0 ? 'API Key cannot be empty' : null;
-            }
-        });
-        
-        if (!apiKey) {
-            vscode.window.showErrorMessage('❌ API Key is required to use AI Copilot!');
-            return null;
-        }
-        
-        await config.update('apiKey', apiKey, vscode.ConfigurationTarget.Global);
-        vscode.window.showInformationMessage('✅ API Key saved successfully!');
+      vscode.window.showErrorMessage(
+        "❌ API Key is required to use AI Copilot!"
+      );
+      return null;
     }
-    
-    return apiKey;
+
+    await config.update("apiKey", apiKey, vscode.ConfigurationTarget.Global);
+    vscode.window.showInformationMessage("✅ API Key saved successfully!");
+  }
+
+  return apiKey;
 }
 
 /**
  * Chat Panel Provider
  */
 class ChatViewProvider {
-    constructor(extensionUri) {
-        this._extensionUri = extensionUri;
-        this._view = null;
-    }
+  constructor(extensionUri) {
+    this._extensionUri = extensionUri;
+    this._view = null;
+  }
 
-    resolveWebviewView(webviewView) {
-        this._view = webviewView;
+  resolveWebviewView(webviewView) {
+    this._view = webviewView;
 
-        webviewView.webview.options = {
-            enableScripts: true,
-            localResourceRoots: [this._extensionUri]
-        };
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [this._extensionUri],
+    };
 
-        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
-        webviewView.webview.onDidReceiveMessage(async (data) => {
-            switch (data.type) {
-                case 'sendMessage':
-                    await handleChatMessage(data.message, webviewView.webview);
-                    break;
-                case 'clearChat':
-                    conversationHistory = [];
-                    webviewView.webview.postMessage({ type: 'clearChat' });
-                    break;
-                case 'stopStream':
-                    if (currentStreamController) {
-                        currentStreamController.abort();
-                        currentStreamController = null;
-                        webviewView.webview.postMessage({ 
-                            type: 'streamStopped', 
-                            text: '\n\n_[Response stopped by user]_' 
-                        });
-                    }
-                    break;
-            }
-        });
-    }
+    webviewView.webview.onDidReceiveMessage(async (data) => {
+      switch (data.type) {
+        case "sendMessage":
+          await handleChatMessage(data.message, webviewView.webview);
+          break;
+        case "clearChat":
+          conversationHistory = [];
+          webviewView.webview.postMessage({ type: "clearChat" });
+          break;
+        case "stopStream":
+          if (currentStreamController) {
+            currentStreamController.abort();
+            currentStreamController = null;
+            webviewView.webview.postMessage({
+              type: "streamStopped",
+              text: "\n\n_[Response stopped by user]_",
+            });
+          }
+          break;
+      }
+    });
+  }
 
-    _getHtmlForWebview(webview) {
-        return `<!DOCTYPE html>
+  _getHtmlForWebview(webview) {
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -365,9 +398,7 @@ class ChatViewProvider {
                 <button class="suggestion-btn" onclick="sendSuggestion('Review my current file')">
                     🔍 Review my current file
                 </button>
-                <button class="suggestion-btn" onclick="sendSuggestion('Explain this code')">
-                    📖 Explain selected code
-                </button>
+ 
                 <button class="suggestion-btn" onclick="sendSuggestion('Find bugs and security issues')">
                     🐛 Find bugs and security issues
                 </button>
@@ -455,8 +486,9 @@ class ChatViewProvider {
         }
 
         function formatMessage(text) {
+        
             return text.replace(/\`\`\`([\\s\\S]*?)\`\`\`/g, '<pre><code>$1</code></pre>')
-                      .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
+                      .replace(/\`([*\`]+)\`/g, '<code>$1</code>')
                       .replace(/\\n/g, '<br>');
         }
 
@@ -515,17 +547,16 @@ class ChatViewProvider {
                 <h3>👋 Hi! I'm your AI coding assistant</h3>
                 <p>Ask me anything about your code</p>
                 <div class="suggestions">
-                    <button class="suggestion-btn" onclick="sendSuggestion('Review my current file')">
-                        🔍 Review my current file
-                    </button>
-                    <button class="suggestion-btn" onclick="sendSuggestion('Explain this code')">
-                        📖 Explain selected code
-                    </button>
+                   
+                     
                     <button class="suggestion-btn" onclick="sendSuggestion('Find bugs and security issues')">
                         🐛 Find bugs and security issues
                     </button>
                     <button class="suggestion-btn" onclick="sendSuggestion('Generate unit tests')">
                         🧪 Generate unit tests
+                    </button>
+                     <button class="suggestion-btn" onclick="sendSuggestion('Review my current file')">
+                        🔍 Review my current file
                     </button>
                 </div>
             \`;
@@ -584,320 +615,349 @@ class ChatViewProvider {
     </script>
 </body>
 </html>`;
-    }
+  }
 }
 
 /**
- * Handle chat messages with Gemini API
- */
- /**
- * Handle chat messages with Gemini API - FIXED CONTEXT
- */
- /**
  * Handle chat messages with Gemini API - FIXED FORMATTING
  */
+/**
+ * Handle chat messages with Gemini API - FIXED CONTEXT
+ */
 async function handleChatMessage(message, webview) {
-    try {
-        const apiKey = await getApiKey();
-        
-        if (!apiKey) {
-            webview.postMessage({ type: 'error', text: 'API Key not set!' });
-            return;
-        }
+  try {
+    const apiKey = await getApiKey();
 
-        let fullPrompt = message;
-        
-        // Only add context if user mentions "file", "code", "current", etc.
-        const needsContext = /\b(file|code|current|this|review|analyze|fix|refactor)\b/i.test(message);
-        
-        if (needsContext) {
-            const editor = vscode.window.activeTextEditor;
-            
-            if (editor && editor.document) {
-                const fileName = editor.document.fileName.split(/[\\/]/).pop();
-                const language = editor.document.languageId;
-                const selection = editor.selection;
-                const codeContext = !selection.isEmpty 
-                    ? editor.document.getText(selection) 
-                    : editor.document.getText();
-                
-                fullPrompt = `File: ${fileName} (${language})
+    if (!apiKey) {
+      webview.postMessage({
+        type: "error",
+        text: "API Key not set! Please provide your Gemini API key.",
+      });
+      return;
+    }
 
-Code:
+    const editor = vscode.window.activeTextEditor;
+    let fullPrompt = message;
+
+    // Add file context if available
+    if (editor && editor.document) {
+      const fileName = editor.document.fileName.split(/[\\/]/).pop();
+      const language = editor.document.languageId;
+      const selection = editor.selection;
+
+      // Check if there's a selection, otherwise use entire file
+      const codeContext = !selection.isEmpty
+        ? editor.document.getText(selection)
+        : editor.document.getText();
+
+      // Add context to prompt
+      fullPrompt = `I'm working on file: ${fileName} (Language: ${language})
+
+File Content:
 \`\`\`${language}
 ${codeContext}
 \`\`\`
 
-Question: ${message}`;
-            }
-        }
-
-        conversationHistory.push({ 
-            role: 'user', 
-            parts: [{ text: fullPrompt }] 
-        });
-
-        const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
-            {
-                contents: [
-                    {
-                        role: 'user',
-                        parts: [{ 
-                            text: 'You are a helpful coding assistant. IMPORTANT: Do NOT use markdown formatting symbols like *, **, #, or ###. Use plain text only. For emphasis, use CAPITAL LETTERS. For code, use triple backticks (```
-                        }]
-                    },
-                    ...conversationHistory.slice(-6).map(msg => ({
-                        role: msg.role === 'assistant' ? 'model' : 'user',
-                        parts: msg.parts
-                    }))
-                ],
-                generationConfig: {
-                    temperature: 0.3,
-                    maxOutputTokens: 2048,
-                }
-            }
-        );
-
-        let aiText = response.data.candidates.content.parts.text;
-        
-        // Clean up markdown symbols from response
-        aiText = aiText
-            .replace(/\*\*\*(.+?)\*\*\*/g, '$1')  // Remove bold+italic ***text***
-            .replace(/\*\*(.+?)\*\*/g, '$1')      // Remove bold **text**
-            .replace(/\*(.+?)\*/g, '$1')          // Remove italic *text*
-            .replace(/^#{1,6}\s+/gm, '')          // Remove # headers
-            .replace(/^[-*+]\s+/gm, '- ');        // Keep bullet points clean
-        
-        conversationHistory.push({ role: 'assistant', parts: [{ text: aiText }] });
-        
-        webview.postMessage({ type: 'aiResponse', text: aiText });
-
-    } catch (error) {
-        console.error('Gemini API Error:', error.response?.data || error.message);
-        webview.postMessage({ 
-            type: 'error', 
-            text: 'AI request failed: ' + (error.response?.data?.error?.message || error.message) 
-        });
+User Question: ${message}`;
     }
+
+    // Add to conversation history with full context
+    conversationHistory.push({
+      role: "user",
+      parts: [{ text: fullPrompt }],
+    });
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
+      {
+        contents: conversationHistory.slice(-6).map((msg) => ({
+          role: msg.role === "assistant" ? "model" : "user",
+          parts: msg.parts,
+        })),
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 2048,
+        },
+      }
+    );
+
+    const aiText = response.data.candidates[0].content.parts[0].text;
+    conversationHistory.push({ role: "assistant", parts: [{ text: aiText }] });
+
+    webview.postMessage({ type: "aiResponse", text: aiText });
+  } catch (error) {
+    console.error("Gemini API Error:", error.response?.data || error.message);
+    webview.postMessage({
+      type: "error",
+      text:
+        "AI request failed: " +
+        (error.response?.data?.error?.message || error.message),
+    });
+  }
 }
 
-
-
 function openChatPanel(context) {
-    vscode.commands.executeCommand('workbench.view.extension.ai-copilot-panel');
+  vscode.commands.executeCommand("workbench.view.extension.ai-copilot-panel");
 }
 
 async function reviewCurrentFile() {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-        vscode.window.showWarningMessage('❌ No file open!');
-        return;
-    }
-    await reviewDocument(editor.document);
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    vscode.window.showWarningMessage("❌ No file open!");
+    return;
+  }
+  await reviewDocument(editor.document);
 }
 
 async function reviewSelectedCode() {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) return;
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
 
-    const selection = editor.selection;
-    const code = editor.document.getText(selection);
+  const selection = editor.selection;
+  const code = editor.document.getText(selection);
 
-    if (!code) {
-        vscode.window.showWarningMessage('❌ No code selected!');
-        return;
-    }
+  if (!code) {
+    vscode.window.showWarningMessage("❌ No code selected!");
+    return;
+  }
 
-    await reviewCode(editor.document, code, selection.start.line);
+  await reviewCode(editor.document, code, selection.start.line);
 }
 
 async function reviewDocument(document) {
-    const supportedLanguages = ['javascript', 'typescript', 'python', 'java', 'cpp', 'c', 'go', 'rust'];
-    
-    if (!supportedLanguages.includes(document.languageId)) {
-        vscode.window.showInformationMessage('⚠️ Language not supported.');
-        return;
-    }
+  const supportedLanguages = [
+    "javascript",
+    "typescript",
+    "python",
+    "java",
+    "cpp",
+    "c",
+    "go",
+    "rust",
+  ];
 
-    await reviewCode(document, document.getText(), 0);
+  if (!supportedLanguages.includes(document.languageId)) {
+    vscode.window.showInformationMessage("⚠️ Language not supported.");
+    return;
+  }
+
+  await reviewCode(document, document.getText(), 0);
 }
 
 async function reviewCode(document, code, startLine) {
-    await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: "AI Copilot",
-        cancellable: false
-    }, async (progress) => {
-        progress.report({ message: "🤖 Reviewing code..." });
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "AI Copilot",
+      cancellable: false,
+    },
+    async (progress) => {
+      progress.report({ message: "🤖 Reviewing code..." });
+
+      try {
+        const apiKey = await getApiKey();
+        if (!apiKey) return;
+
+        const response = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
+          {
+            contents: [
+              {
+                parts: [
+                  {
+                    text: ` You are a strict JSON code reviewer. 
+    INSTRUCTIONS:
+    1. Identify bugs, security issues, and bad practices.
+    2. Your entire output MUST be a valid JSON array.
+    3. DO NOT use asterisks (*) or hashtags (#) anywhere in the text or JSON messages.
+    4. DO NOT include markdown code blocks like \`\`\`json.
+    5. Use plain, simple text for the "message" field
+                            . Return JSON: [{"line": number, "message": "text", "severity": "error"|"warning"|"info"}]\n\nReview:\n\n${code}`,
+                  },
+                ],
+              },
+            ],
+            generationConfig: {
+              temperature: 0,
+              maxOutputTokens: 2000,
+            },
+          }
+        );
+
+        const aiResponse = response.data.candidates[0].content.parts[0].text;
+        let issues = [];
 
         try {
-            const apiKey = await getApiKey();
-            if (!apiKey) return;
-
-            const response = await axios.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
-                {
-                    contents: [{
-                        parts: [{
-                            text: `Code reviewer. Find bugs, security issues, bad practices. Return JSON: [{"line": number, "message": "text", "severity": "error"|"warning"|"info"}]\n\nReview:\n\n${code}`
-                        }]
-                    }],
-                    generationConfig: {
-                        temperature: 0.2,
-                        maxOutputTokens: 2000,
-                    }
-                }
-            );
-
-            const aiResponse = response.data.candidates[0].content.parts[0].text;
-            let issues = [];
-
-            try {
-                const jsonMatch = aiResponse.match(/\[[\s\S]*\]/);
-                if (jsonMatch) issues = JSON.parse(jsonMatch[0]);
-            } catch (e) {
-                console.error('Parse error:', e);
-            }
-
-            const diagnostics = issues.map(issue => {
-                const line = Math.max(0, Math.min((issue.line || 1) - 1 + startLine, document.lineCount - 1));
-                const range = document.lineAt(line).range;
-                
-                let severity = vscode.DiagnosticSeverity.Warning;
-                if (issue.severity === 'error') severity = vscode.DiagnosticSeverity.Error;
-                if (issue.severity === 'info') severity = vscode.DiagnosticSeverity.Information;
-
-                const diag = new vscode.Diagnostic(range, `🤖 ${issue.message}`, severity);
-                diag.source = 'AI Copilot';
-                return diag;
-            });
-
-            diagnosticCollection.set(document.uri, diagnostics);
-
-            if (diagnostics.length === 0) {
-                vscode.window.showInformationMessage('✅ No issues found!');
-            } else {
-                vscode.window.showInformationMessage(`🔍 Found ${diagnostics.length} issue(s)`);
-            }
-
-        } catch (error) {
-            vscode.window.showErrorMessage('❌ Review failed: ' + (error.response?.data?.error?.message || error.message));
+          const jsonMatch = aiResponse.match(/\[[\s\S]*\]/);
+          if (jsonMatch) issues = JSON.parse(jsonMatch[0]);
+        } catch (e) {
+          console.error("Parse error:", e);
         }
-    });
+
+        const diagnostics = issues.map((issue) => {
+          const line = Math.max(
+            0,
+            Math.min((issue.line || 1) - 1 + startLine, document.lineCount - 1)
+          );
+          const range = document.lineAt(line).range;
+
+          let severity = vscode.DiagnosticSeverity.Warning;
+          if (issue.severity === "error")
+            severity = vscode.DiagnosticSeverity.Error;
+          if (issue.severity === "info")
+            severity = vscode.DiagnosticSeverity.Information;
+
+          const diag = new vscode.Diagnostic(
+            range,
+            `🤖 ${issue.message}`,
+            severity
+          );
+          diag.source = "AI Copilot";
+          return diag;
+        });
+
+        diagnosticCollection.set(document.uri, diagnostics);
+
+        if (diagnostics.length === 0) {
+          vscode.window.showInformationMessage("✅ No issues found!");
+        } else {
+          vscode.window.showInformationMessage(
+            `🔍 Found ${diagnostics.length} issue(s)`
+          );
+        }
+      } catch (error) {
+        vscode.window.showErrorMessage(
+          "❌ Review failed: " +
+            (error.response?.data?.error?.message || error.message)
+        );
+      }
+    }
+  );
 }
 
 async function explainCode() {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) return;
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
 
-    const selection = editor.selection;
-    const code = editor.document.getText(selection);
+  const selection = editor.selection;
+  const code = editor.document.getText(selection);
 
-    if (!code) {
-        vscode.window.showWarningMessage('❌ Select code first!');
-        return;
-    }
+  if (!code) {
+    vscode.window.showWarningMessage("❌ Select code first!");
+    return;
+  }
 
-    const response = await callAI(`Explain this code concisely:\n\n${code}`);
-    if (response) {
-        vscode.window.showInformationMessage(response, { modal: true });
-    }
+  const response = await callAI(`Explain this code concisely:\n\n${code}`);
+  if (response) {
+    vscode.window.showInformationMessage(response, { modal: true });
+  }
 }
 
 async function fixCode() {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) return;
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
 
-    const selection = editor.selection;
-    const code = editor.document.getText(selection);
+  const selection = editor.selection;
+  const code = editor.document.getText(selection);
 
-    if (!code) {
-        vscode.window.showWarningMessage('❌ Select code first!');
-        return;
-    }
+  if (!code) {
+    vscode.window.showWarningMessage("❌ Select code first!");
+    return;
+  }
 
-    const response = await callAI(`Fix bugs in this code and return only the fixed code:\n\n${code}`);
-    if (response) {
-        editor.edit(editBuilder => {
-            editBuilder.replace(selection, response);
-        });
-        vscode.window.showInformationMessage('✨ Code fixed!');
-    }
+  const response = await callAI(
+    `Fix bugs in this code and return only the fixed code:\n\n${code}`
+  );
+  if (response) {
+    editor.edit((editBuilder) => {
+      editBuilder.replace(selection, response);
+    });
+    vscode.window.showInformationMessage("✨ Code fixed!");
+  }
 }
 
 async function generateTests() {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) return;
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
 
-    const selection = editor.selection;
-    const code = editor.document.getText(selection);
+  const selection = editor.selection;
+  const code = editor.document.getText(selection);
 
-    if (!code) {
-        vscode.window.showWarningMessage('❌ Select function to test!');
-        return;
-    }
+  if (!code) {
+    vscode.window.showWarningMessage("❌ Select function to test!");
+    return;
+  }
 
-    const response = await callAI(`Generate unit tests for:\n\n${code}`);
-    if (response) {
-        const doc = await vscode.workspace.openTextDocument({ content: response, language: editor.document.languageId });
-        vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
-    }
+  const response = await callAI(`Generate unit tests for:\n\n${code}`);
+  if (response) {
+    const doc = await vscode.workspace.openTextDocument({
+      content: response,
+      language: editor.document.languageId,
+    });
+    vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+  }
 }
 
 async function refactorCode() {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) return;
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
 
-    const selection = editor.selection;
-    const code = editor.document.getText(selection);
+  const selection = editor.selection;
+  const code = editor.document.getText(selection);
 
-    if (!code) {
-        vscode.window.showWarningMessage('❌ Select code first!');
-        return;
-    }
+  if (!code) {
+    vscode.window.showWarningMessage("❌ Select code first!");
+    return;
+  }
 
-    const response = await callAI(`Refactor this code for better readability and performance:\n\n${code}`);
-    if (response) {
-        editor.edit(editBuilder => {
-            editBuilder.replace(selection, response);
-        });
-        vscode.window.showInformationMessage('♻️ Code refactored!');
-    }
+  const response = await callAI(
+    `Refactor this code for better readability and performance:\n\n${code}`
+  );
+  if (response) {
+    editor.edit((editBuilder) => {
+      editBuilder.replace(selection, response);
+    });
+    vscode.window.showInformationMessage("♻️ Code refactored!");
+  }
 }
 
 async function callAI(prompt) {
-    try {
-        const apiKey = await getApiKey();
-        if (!apiKey) return null;
+  try {
+    const apiKey = await getApiKey();
+    if (!apiKey) return null;
 
-        const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
-            {
-                contents: [{
-                    parts: [{ text: prompt }]
-                }],
-                generationConfig: {
-                    temperature: 0.3,
-                    maxOutputTokens: 1000,
-                }
-            }
-        );
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
+      {
+        contents: [
+          {
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 1000,
+        },
+      }
+    );
 
-        return response.data.candidates[0].content.parts[0].text;
-    } catch (error) {
-        vscode.window.showErrorMessage('❌ AI request failed: ' + (error.response?.data?.error?.message || error.message));
-        return null;
-    }
+    return response.data.candidates[0].content.parts[0].text;
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      "❌ AI request failed: " +
+        (error.response?.data?.error?.message || error.message)
+    );
+    return null;
+  }
 }
 
 function deactivate() {
-    if (diagnosticCollection) {
-        diagnosticCollection.clear();
-    }
-    if (statusBarItem) {
-        statusBarItem.dispose();
-    }
+  if (diagnosticCollection) {
+    diagnosticCollection.clear();
+  }
+  if (statusBarItem) {
+    statusBarItem.dispose();
+  }
 }
 
 module.exports = { activate, deactivate };
