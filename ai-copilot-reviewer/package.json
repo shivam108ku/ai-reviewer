@@ -1,0 +1,148 @@
+{
+  "name": "ai-copilot-reviewer",
+  "displayName": "AI Copilot Code Reviewer",
+  "description": "Full AI assistant with chat and auto-fix",
+  "version": "1.0.0",
+  "publisher": "your-name",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Linters"
+  ],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./src/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ai-copilot-panel",
+          "title": "AI Copilot",
+          "icon": "$(sparkle)"
+        }
+      ]
+    },
+    "views": {
+      "ai-copilot-panel": [
+        {
+          "type": "webview",
+          "id": "aiCopilotChat",
+          "name": "AI Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "aiCopilotReviewer.openChat",
+        "title": "💬 Open Chat",
+        "category": "AI Copilot"
+      },
+      {
+        "command": "aiCopilotReviewer.reviewFile",
+        "title": "🔍 Review File",
+        "category": "AI Copilot"
+      },
+      {
+        "command": "aiCopilotReviewer.fixAllIssues",
+        "title": "✨ Fix All",
+        "category": "AI Copilot"
+      },
+      {
+        "command": "aiCopilotReviewer.reviewSelection",
+        "title": "🔍 Review Selection",
+        "category": "AI Copilot"
+      },
+      {
+        "command": "aiCopilotReviewer.explainCode",
+        "title": "📖 Explain",
+        "category": "AI Copilot"
+      },
+      {
+        "command": "aiCopilotReviewer.fixCode",
+        "title": "✨ Fix",
+        "category": "AI Copilot"
+      },
+      {
+        "command": "aiCopilotReviewer.generateTests",
+        "title": "🧪 Generate Tests",
+        "category": "AI Copilot"
+      },
+      {
+        "command": "aiCopilotReviewer.refactorCode",
+        "title": "♻️ Refactor",
+        "category": "AI Copilot"
+      },
+      {
+        "command": "aiCopilotReviewer.clearDiagnostics",
+        "title": "🗑️ Clear",
+        "category": "AI Copilot"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "submenu": "aiCopilot.submenu",
+          "group": "1_modification"
+        }
+      ],
+      "aiCopilot.submenu": [
+        {
+          "command": "aiCopilotReviewer.explainCode",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "aiCopilotReviewer.fixCode",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "aiCopilotReviewer.refactorCode",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "aiCopilotReviewer.generateTests",
+          "when": "editorHasSelection"
+        }
+      ]
+    },
+    "submenus": [
+      {
+        "id": "aiCopilot.submenu",
+        "label": "🤖 AI Copilot"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "aiCopilotReviewer.reviewFile",
+        "key": "ctrl+shift+r"
+      },
+      {
+        "command": "aiCopilotReviewer.fixAllIssues",
+        "key": "ctrl+shift+f"
+      },
+      {
+        "command": "aiCopilotReviewer.openChat",
+        "key": "ctrl+shift+i"
+      }
+    ],
+    "configuration": {
+      "title": "AI Copilot",
+      "properties": {
+        "aiCopilotReviewer.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API Key"
+        },
+        "aiCopilotReviewer.reviewOnSave": {
+          "type": "boolean",
+          "default": false
+        },
+        "aiCopilotReviewer.model": {
+          "type": "string",
+          "default": "deepseek-chat",
+          "enum": ["deepseek-chat", "deepseek-coder"]
+        }
+      }
+    }
+  }
+}
