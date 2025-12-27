@@ -1,17 +1,17 @@
 {
   "name": "ai-copilot-reviewer",
-  "displayName": "AI Copilot Code Reviewer",
-  "description": "Full AI assistant with chat and auto-fix",
+  "displayName": "AI Copilot Reviewer",
+  "description": "AI-powered code reviewer and chat assistant",
   "version": "1.0.0",
-  "publisher": "your-name",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.60.0"
   },
   "categories": [
-    "Machine Learning",
-    "Linters"
+    "Other"
   ],
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./src/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -28,121 +28,97 @@
         {
           "type": "webview",
           "id": "aiCopilotChat",
-          "name": "AI Chat"
+          "name": "Chat"
         }
       ]
     },
     "commands": [
       {
         "command": "aiCopilotReviewer.openChat",
-        "title": "💬 Open Chat",
-        "category": "AI Copilot"
+        "title": "AI Copilot: Open Chat",
+        "icon": "$(comment-discussion)"
       },
       {
         "command": "aiCopilotReviewer.reviewFile",
-        "title": "🔍 Review File",
-        "category": "AI Copilot"
-      },
-      {
-        "command": "aiCopilotReviewer.fixAllIssues",
-        "title": "✨ Fix All",
-        "category": "AI Copilot"
+        "title": "AI Copilot: Review File"
       },
       {
         "command": "aiCopilotReviewer.reviewSelection",
-        "title": "🔍 Review Selection",
-        "category": "AI Copilot"
+        "title": "AI Copilot: Review Selection"
       },
       {
         "command": "aiCopilotReviewer.explainCode",
-        "title": "📖 Explain",
-        "category": "AI Copilot"
+        "title": "AI Copilot: Explain Code"
       },
       {
         "command": "aiCopilotReviewer.fixCode",
-        "title": "✨ Fix",
-        "category": "AI Copilot"
+        "title": "AI Copilot: Fix Code"
       },
       {
         "command": "aiCopilotReviewer.generateTests",
-        "title": "🧪 Generate Tests",
-        "category": "AI Copilot"
+        "title": "AI Copilot: Generate Tests"
       },
       {
         "command": "aiCopilotReviewer.refactorCode",
-        "title": "♻️ Refactor",
-        "category": "AI Copilot"
+        "title": "AI Copilot: Refactor Code"
       },
       {
         "command": "aiCopilotReviewer.clearDiagnostics",
-        "title": "🗑️ Clear",
-        "category": "AI Copilot"
+        "title": "AI Copilot: Clear Reviews"
       }
     ],
     "menus": {
       "editor/context": [
         {
-          "submenu": "aiCopilot.submenu",
-          "group": "1_modification"
-        }
-      ],
-      "aiCopilot.submenu": [
+          "command": "aiCopilotReviewer.reviewSelection",
+          "when": "editorHasSelection",
+          "group": "aiCopilot@1"
+        },
         {
           "command": "aiCopilotReviewer.explainCode",
-          "when": "editorHasSelection"
+          "when": "editorHasSelection",
+          "group": "aiCopilot@2"
         },
         {
           "command": "aiCopilotReviewer.fixCode",
-          "when": "editorHasSelection"
-        },
-        {
-          "command": "aiCopilotReviewer.refactorCode",
-          "when": "editorHasSelection"
-        },
-        {
-          "command": "aiCopilotReviewer.generateTests",
-          "when": "editorHasSelection"
+          "when": "editorHasSelection",
+          "group": "aiCopilot@3"
         }
       ]
     },
-    "submenus": [
-      {
-        "id": "aiCopilot.submenu",
-        "label": "🤖 AI Copilot"
-      }
-    ],
-    "keybindings": [
-      {
-        "command": "aiCopilotReviewer.reviewFile",
-        "key": "ctrl+shift+r"
-      },
-      {
-        "command": "aiCopilotReviewer.fixAllIssues",
-        "key": "ctrl+shift+f"
-      },
-      {
-        "command": "aiCopilotReviewer.openChat",
-        "key": "ctrl+shift+i"
-      }
-    ],
     "configuration": {
-      "title": "AI Copilot",
+      "title": "AI Copilot Reviewer",
       "properties": {
         "aiCopilotReviewer.apiKey": {
           "type": "string",
           "default": "",
           "description": "DeepSeek API Key"
         },
-        "aiCopilotReviewer.reviewOnSave": {
-          "type": "boolean",
-          "default": false
-        },
         "aiCopilotReviewer.model": {
           "type": "string",
           "default": "deepseek-chat",
-          "enum": ["deepseek-chat", "deepseek-coder"]
+          "description": "AI Model to use"
+        },
+        "aiCopilotReviewer.reviewOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically review code on save"
         }
       }
     }
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "npm run lint",
+    "test": "node ./test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.60.0",
+    "@types/node": "^16.x",
+    "eslint": "^8.x"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dotenv": "^16.0.0"
   }
 }

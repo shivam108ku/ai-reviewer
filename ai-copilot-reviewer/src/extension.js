@@ -765,7 +765,8 @@ async function reviewSelectedCode() {
     }
 
 
-    await reviewCode(editor.document, code, selection.start.line);
+     // handleChatMessage ke andar replace karein:
+content: 'You are an expert programming assistant. Provide concise, direct solutions. DO NOT use bold text (**) or headers (#). Use plain text for explanation and markdown blocks ONLY for code snippets. Avoid all decorative symbols.'
 }
 
 
@@ -986,11 +987,14 @@ async function callAI(prompt) {
 
 
 function deactivate() {
-    if (currentStreamController) {
-        currentStreamController.abort();
+    if (diagnosticCollection) {
+        diagnosticCollection.clear();
     }
-    diagnosticCollection.clear();
+    if (statusBarItem) {
+        statusBarItem.dispose();
+    }
 }
 
+ 
 
 module.exports = { activate, deactivate };
