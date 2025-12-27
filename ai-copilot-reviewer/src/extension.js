@@ -1,6 +1,5 @@
 const vscode = require('vscode');
 const axios = require('axios');
-require('dotenv').config();
 
 
 // Global state
