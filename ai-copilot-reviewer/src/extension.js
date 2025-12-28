@@ -1,14 +1,14 @@
-const vscode = require("vscode");
+ const vscode = require("vscode");
 const axios = require("axios");
 
 // Global state
-const diagnosticCollection =
-  vscode.languages.createDiagnosticCollection("ai-copilot");
+const diagnosticCollection = vscode.languages.createDiagnosticCollection("ai-copilot");
 let statusBarItem;
 let outputChannel;
 let chatPanel;
 let conversationHistory = [];
 let currentStreamController = null;
+let codeLensProvider; // ✅ ADD THIS
 
 function activate(context) {
   console.log("🤖 AI Copilot activated!");
@@ -26,11 +26,14 @@ function activate(context) {
   statusBarItem.command = "aiCopilotReviewer.openChat";
   statusBarItem.show();
 
+  // ✅ INITIALIZE CodeLens Provider
+  codeLensProvider = new AIReviewCodeLensProvider();
+  
   // Register CodeLens Provider for selected code review
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider(
       { scheme: "file" },
-      new AIReviewCodeLensProvider()
+      codeLensProvider
     )
   );
 
@@ -45,13 +48,23 @@ function activate(context) {
     )
   );
 
-  // Listen to selection changes
+  // ✅ FIXED - Listen to selection changes with debounce
+  let selectionTimeout;
   context.subscriptions.push(
-    vscode.window.onDidChangeTextEditorSelection(async (event) => {
-      const selection = event.selections[0];
-      if (!selection.isEmpty) {
-        vscode.commands.executeCommand("vscode.executeCodeLensProvider");
+    vscode.window.onDidChangeTextEditorSelection((event) => {
+      // Clear previous timeout
+      if (selectionTimeout) {
+        clearTimeout(selectionTimeout);
       }
+      
+      // Debounce to avoid too many updates
+      selectionTimeout = setTimeout(() => {
+        const selection = event.selections[0];
+        if (!selection.isEmpty) {
+          // Trigger CodeLens refresh
+          codeLensProvider._onDidChangeCodeLenses.fire();
+        }
+      }, 100); // 100ms delay
     })
   );
 
@@ -124,7 +137,7 @@ function activate(context) {
 }
 
 /**
- * CodeLens Provider - Shows "Review Code" option on selected text
+ * ✅ UPDATED - CodeLens Provider with proper event emitter
  */
 class AIReviewCodeLensProvider {
   constructor() {
@@ -144,18 +157,25 @@ class AIReviewCodeLensProvider {
     }
 
     const codeLens = new vscode.CodeLens(selection, {
-      title: "🔍 AI Review This Code",
-      tooltip: "Review selected code with AI",
+      title: "🔍 Review Code | 🐛 Find Bugs",
+      tooltip: "AI Review and Find Issues",
       command: "aiCopilotReviewer.quickReviewSelection",
       arguments: [document, selection],
     });
 
     return [codeLens];
   }
+
+  // ✅ Optional: Add resolveCodeLens if needed
+  resolveCodeLens(codeLens, token) {
+    return codeLens;
+  }
 }
+ 
+
 
 /**
- * Quick review for selected code with inline diagnostics - IMPROVED PROMPT
+ * Quick review for selected code with inline diagnostics
  */
 async function quickReviewSelection(document, selection) {
   const editor = vscode.window.activeTextEditor;
@@ -215,7 +235,7 @@ If no critical issues found, return: []`,
               },
             ],
             generationConfig: {
-              temperature: 0.1, // Lower temperature for more focused results
+              temperature: 0.1,
               maxOutputTokens: 1500,
             },
           }
@@ -228,7 +248,6 @@ If no critical issues found, return: []`,
           const jsonMatch = aiResponse.match(/\[[\s\S]*?\]/);
           if (jsonMatch) {
             const parsed = JSON.parse(jsonMatch[0]);
-            // Filter out non-critical issues
             issues = parsed.filter(
               (issue) =>
                 issue.message &&
@@ -316,12 +335,9 @@ class AICodeFixProvider {
 }
 
 /**
- * Apply AI fix to code - IMPROVED
+ * Apply AI fix to code - IMPROVED AND FIXED
  */
- /**
- * Apply AI fix to code - FIXED REGEX
- */
-async function applyAIFix(document, diagnostic) {
+ async function applyAIFix(document, diagnostic) {
   try {
     const apiKey = await getApiKey();
     if (!apiKey) return;
@@ -334,7 +350,7 @@ async function applyAIFix(document, diagnostic) {
     );
 
     const context = document.getText(
-      new vscode.Range(startLine, 0, endLine, 0)
+      new vscode.Range(startLine, 0, endLine, Number.MAX_SAFE_INTEGER)
     );
 
     const language = document.languageId;
@@ -356,6 +372,7 @@ RULES:
 3. DO NOT change working code
 4. Keep the same indentation and style
 5. Fix ONLY the reported issue
+6. DO NOT wrap response in code blocks
 
 Fixed line:`;
 
@@ -370,19 +387,19 @@ Fixed line:`;
       }
     );
 
-    let fixedCode = response.data.candidates.content.parts.text.trim();
+    let fixedCode = response.data.candidates[0].content.parts[0].text.trim();
 
-// Just remove all backticks and extra whitespace
-fixedCode = fixedCode
-  .split('```').join('')  // Remove all ```
-  .split('\n')
-  .filter(line => !line.match(/^[a-z]+$/)) // Remove language names
-  .join('\n')
-  .trim();
-
-    
-    // FIXED: Properly escaped regex patterns
-    
+    // Clean up - Remove markdown code blocks
+     fixedCode = fixedCode
+      .replace(/```[\w\s]*\n?/g, '')  // 1. Opening block (eg: ```javascript) remove karega
+      .replace(/```/g, '')            // 2. Closing block (```) remove karega
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => {
+        return line && !(/^[a-z]+$/i.test(line));
+      })
+      .join('\n')
+      .trim();
 
     const editor = vscode.window.activeTextEditor;
     if (editor && editor.document === document) {
@@ -403,6 +420,7 @@ fixedCode = fixedCode
     );
   }
 }
+
 
 /**
  * Get API key from user input
@@ -854,7 +872,6 @@ class ChatViewProvider {
         }
 
         function clearChat() {
-            conversationHistory = [];
             vscode.postMessage({ type: 'clearChat' });
             chatContainer.innerHTML = '';
             const emptyState = document.createElement('div');
@@ -863,14 +880,14 @@ class ChatViewProvider {
                 <h3>👋 Hi! I'm your AI coding assistant</h3>
                 <p>Ask me anything about your code</p>
                 <div class="suggestions">
+                    <button class="suggestion-btn" onclick="sendSuggestion('Review my current file')">
+                        🔍 Review my current file
+                    </button>
                     <button class="suggestion-btn" onclick="sendSuggestion('Find bugs and security issues')">
                         🐛 Find bugs and security issues
                     </button>
                     <button class="suggestion-btn" onclick="sendSuggestion('Generate unit tests')">
                         🧪 Generate unit tests
-                    </button>
-                     <button class="suggestion-btn" onclick="sendSuggestion('Review my current file')">
-                        🔍 Review my current file
                     </button>
                 </div>
             \`;
@@ -1077,8 +1094,10 @@ INSTRUCTIONS:
 1. Identify bugs, security issues, and bad practices.
 2. Your entire output MUST be a valid JSON array.
 3. DO NOT use asterisks (*) or hashtags (#) anywhere in the text or JSON messages.
-4. DO NOT include markdown code blocks like \`\`\`json.
-5. Use plain, simple text for the "message" field. Return JSON: [{"line": number, "message": "text", "severity": "error"|"warning"|"info"}]
+4. DO NOT include markdown code blocks.
+5. Use plain, simple text for the "message" field.
+
+Return JSON: [{"line": number, "message": "text", "severity": "error"|"warning"|"info"}]
 
 Review:
 
