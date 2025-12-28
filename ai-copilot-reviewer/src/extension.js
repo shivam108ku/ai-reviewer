@@ -26,6 +26,17 @@ function activate(context) {
   statusBarItem.command = "aiCopilotReviewer.openChat";
   statusBarItem.show();
 
+  // Register CodeActionProvider for auto-fix
+  context.subscriptions.push(
+    vscode.languages.registerCodeActionsProvider(
+      { scheme: "file" },
+      new AICodeFixProvider(),
+      {
+        providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
+      }
+    )
+  );
+
   // Register commands
   context.subscriptions.push(
     vscode.commands.registerCommand("aiCopilotReviewer.openChat", () =>
@@ -84,6 +95,97 @@ function activate(context) {
     statusBarItem,
     outputChannel
   );
+}
+
+/**
+ * CodeActionProvider for AI-powered auto-fix
+ */
+class AICodeFixProvider {
+  provideCodeActions(document, range, context, token) {
+    const codeActions = [];
+
+    // Check if there are diagnostics from AI Copilot
+    context.diagnostics.forEach((diagnostic) => {
+      if (diagnostic.source === "AI Copilot") {
+        const fix = new vscode.CodeAction(
+          "🤖 AI Auto-Fix",
+          vscode.CodeActionKind.QuickFix
+        );
+        fix.command = {
+          title: "Fix with AI",
+          command: "aiCopilotReviewer.applyAIFix",
+          arguments: [document, diagnostic],
+        };
+        fix.diagnostics = [diagnostic];
+        fix.isPreferred = true;
+        codeActions.push(fix);
+      }
+    });
+
+    return codeActions;
+  }
+}
+
+/**
+ * Apply AI fix to code
+ */
+async function applyAIFix(document, diagnostic) {
+  try {
+    const apiKey = await getApiKey();
+    if (!apiKey) return;
+
+    const lineText = document.lineAt(diagnostic.range.start.line).text;
+    const context = document.getText(
+      new vscode.Range(
+        Math.max(0, diagnostic.range.start.line - 3),
+        0,
+        Math.min(document.lineCount - 1, diagnostic.range.start.line + 3),
+        0
+      )
+    );
+
+    const prompt = `Fix this code issue:
+Issue: ${diagnostic.message}
+Problematic line: ${lineText}
+
+Context:
+${context}
+
+Return ONLY the fixed line of code, nothing else.`;
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 500,
+        },
+      }
+    );
+
+    let fixedCode = response.data.candidates[0].content.parts[0].text.trim();
+    // Remove markdown code blocks if present
+    fixedCode = fixedCode.replace(/``````/g, "");
+
+    const editor = vscode.window.activeTextEditor;
+    if (editor && editor.document === document) {
+      await editor.edit((editBuilder) => {
+        editBuilder.replace(diagnostic.range, fixedCode);
+      });
+      vscode.window.showInformationMessage("✨ AI fix applied!");
+      
+      // Clear the diagnostic after fixing
+      const remainingDiagnostics = diagnosticCollection
+        .get(document.uri)
+        ?.filter((d) => d !== diagnostic);
+      diagnosticCollection.set(document.uri, remainingDiagnostics || []);
+    }
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      "❌ Fix failed: " + (error.response?.data?.error?.message || error.message)
+    );
+  }
 }
 
 /**
@@ -619,10 +721,7 @@ class ChatViewProvider {
 }
 
 /**
- * Handle chat messages with Gemini API - FIXED FORMATTING
- */
-/**
- * Handle chat messages with Gemini API - FIXED CONTEXT
+ * Handle chat messages with Gemini API
  */
 async function handleChatMessage(message, webview) {
   try {
