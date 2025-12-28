@@ -1,60 +1,53 @@
 {
   "name": "ai-copilot-reviewer",
   "displayName": "AI Copilot Reviewer",
-  "description": "AI-powered code review assistant using Google Gemini API",
+  "description": "AI-powered code reviewer and assistant",
   "version": "0.0.1",
-  "publisher": "shivam108ku",
   "engines": {
-    "vscode": "^1.60.0"
+    "vscode": "^1.80.0"
   },
   "categories": [
     "Programming Languages",
-    "Linters",
-    "Machine Learning"
-  ],
-  "keywords": [
-    "ai",
-    "code-review",
-    "gemini",
-    "copilot",
-    "assistant"
+    "Linters"
   ],
   "activationEvents": [
     "onStartupFinished"
   ],
   "main": "./src/extension.js",
   "contributes": {
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "ai-copilot-panel",
-          "title": "AI Copilot",
-          "icon": "$(sparkle)"
+    "configuration": {
+      "title": "AI Copilot Reviewer",
+      "properties": {
+        "aiCopilotReviewer.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google Gemini API Key for AI code review",
+          "markdownDescription": "Get your API key from [Google AI Studio](https://aistudio.google.com/app/apikey)"
+        },
+        "aiCopilotReviewer.reviewOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically review code when file is saved"
         }
-      ]
-    },
-    "views": {
-      "ai-copilot-panel": [
-        {
-          "type": "webview",
-          "id": "aiCopilotChat",
-          "name": "Chat"
-        }
-      ]
+      }
     },
     "commands": [
       {
         "command": "aiCopilotReviewer.openChat",
         "title": "AI Copilot: Open Chat",
-        "icon": "$(comment-discussion)"
+        "icon": "$(sparkle)"
       },
       {
         "command": "aiCopilotReviewer.reviewFile",
-        "title": "AI Copilot: Review File"
+        "title": "AI Copilot: Review Current File"
       },
       {
         "command": "aiCopilotReviewer.reviewSelection",
-        "title": "AI Copilot: Review Selection"
+        "title": "AI Copilot: Review Selected Code"
+      },
+      {
+        "command": "aiCopilotReviewer.quickReviewSelection",
+        "title": "AI Copilot: Quick Review Selection"
       },
       {
         "command": "aiCopilotReviewer.explainCode",
@@ -74,9 +67,27 @@
       },
       {
         "command": "aiCopilotReviewer.clearDiagnostics",
-        "title": "AI Copilot: Clear Reviews"
+        "title": "AI Copilot: Clear Diagnostics"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ai-copilot-panel",
+          "title": "AI Copilot",
+          "icon": "$(sparkle)"
+        }
+      ]
+    },
+    "views": {
+      "ai-copilot-panel": [
+        {
+          "type": "webview",
+          "id": "aiCopilotChat",
+          "name": "Chat"
+        }
+      ]
+    },
     "menus": {
       "editor/context": [
         {
@@ -95,44 +106,20 @@
           "group": "aiCopilot@3"
         }
       ]
-    },
-    "configuration": {
-      "title": "AI Copilot Reviewer",
-      "properties": {
-        "aiCopilotReviewer.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Google Gemini API Key"
-        },
-        "aiCopilotReviewer.reviewOnSave": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically review code on save"
-        }
-      }
     }
   },
   "scripts": {
-    "package": "vsce package",
     "lint": "eslint .",
     "pretest": "npm run lint",
     "test": "node ./test/runTest.js"
   },
   "devDependencies": {
-    "@types/vscode": "^1.60.0",
-    "@types/node": "^16.x",
-    "@vscode/vsce": "^2.22.0",
-    "eslint": "^8.x"
+    "@types/vscode": "^1.80.0",
+    "@types/node": "16.x",
+    "eslint": "^8.41.0",
+    "glob": "^8.1.0"
   },
   "dependencies": {
     "axios": "^1.6.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/shivam108ku/ai-reviewer.git"
-  },
-  "bugs": {
-    "url": "https://github.com/shivam108ku/ai-reviewer/issues"
-  },
-  "license": "MIT"
+  }
 }

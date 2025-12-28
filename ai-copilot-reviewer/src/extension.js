@@ -26,6 +26,14 @@ function activate(context) {
   statusBarItem.command = "aiCopilotReviewer.openChat";
   statusBarItem.show();
 
+  // Register CodeLens Provider for selected code review
+  context.subscriptions.push(
+    vscode.languages.registerCodeLensProvider(
+      { scheme: "file" },
+      new AIReviewCodeLensProvider()
+    )
+  );
+
   // Register CodeActionProvider for auto-fix
   context.subscriptions.push(
     vscode.languages.registerCodeActionsProvider(
@@ -35,6 +43,16 @@ function activate(context) {
         providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
       }
     )
+  );
+
+  // Listen to selection changes
+  context.subscriptions.push(
+    vscode.window.onDidChangeTextEditorSelection(async (event) => {
+      const selection = event.selections[0];
+      if (!selection.isEmpty) {
+        vscode.commands.executeCommand("vscode.executeCodeLensProvider");
+      }
+    })
   );
 
   // Register commands
@@ -51,10 +69,18 @@ function activate(context) {
       reviewSelectedCode
     ),
     vscode.commands.registerCommand(
+      "aiCopilotReviewer.quickReviewSelection",
+      quickReviewSelection
+    ),
+    vscode.commands.registerCommand(
       "aiCopilotReviewer.explainCode",
       explainCode
     ),
     vscode.commands.registerCommand("aiCopilotReviewer.fixCode", fixCode),
+    vscode.commands.registerCommand(
+      "aiCopilotReviewer.applyAIFix",
+      applyAIFix
+    ),
     vscode.commands.registerCommand(
       "aiCopilotReviewer.generateTests",
       generateTests
@@ -98,13 +124,176 @@ function activate(context) {
 }
 
 /**
+ * CodeLens Provider - Shows "Review Code" option on selected text
+ */
+class AIReviewCodeLensProvider {
+  constructor() {
+    this._onDidChangeCodeLenses = new vscode.EventEmitter();
+    this.onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
+  }
+
+  provideCodeLenses(document, token) {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document !== document) {
+      return [];
+    }
+
+    const selection = editor.selection;
+    if (selection.isEmpty) {
+      return [];
+    }
+
+    const codeLens = new vscode.CodeLens(selection, {
+      title: "🔍 AI Review This Code",
+      tooltip: "Review selected code with AI",
+      command: "aiCopilotReviewer.quickReviewSelection",
+      arguments: [document, selection],
+    });
+
+    return [codeLens];
+  }
+}
+
+/**
+ * Quick review for selected code with inline diagnostics - IMPROVED PROMPT
+ */
+async function quickReviewSelection(document, selection) {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || !selection) {
+    selection = editor.selection;
+  }
+
+  const code = document.getText(selection);
+
+  if (!code) {
+    vscode.window.showWarningMessage("❌ No code selected!");
+    return;
+  }
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "AI Copilot",
+      cancellable: false,
+    },
+    async (progress) => {
+      progress.report({ message: "🤖 Reviewing selected code..." });
+
+      try {
+        const apiKey = await getApiKey();
+        if (!apiKey) return;
+
+        const language = document.languageId;
+
+        const response = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
+          {
+            contents: [
+              {
+                parts: [
+                  {
+                    text: `You are an expert code reviewer. Analyze this ${language} code carefully.
+
+CRITICAL RULES:
+1. ONLY report ACTUAL bugs, memory leaks, security vulnerabilities, or critical logic errors
+2. DO NOT report style issues, naming conventions, or working code as problems
+3. DO NOT suggest improvements if code is functionally correct
+4. If code works correctly, return empty array []
+5. Be VERY strict - only critical issues
+
+Code to review:
+\`\`\`${language}
+${code}
+\`\`\`
+
+Return JSON format ONLY (no markdown):
+[{"line": number, "message": "brief description", "severity": "error"|"warning"}]
+
+If no critical issues found, return: []`,
+                  },
+                ],
+              },
+            ],
+            generationConfig: {
+              temperature: 0.1, // Lower temperature for more focused results
+              maxOutputTokens: 1500,
+            },
+          }
+        );
+
+        const aiResponse = response.data.candidates[0].content.parts[0].text;
+        let issues = [];
+
+        try {
+          const jsonMatch = aiResponse.match(/\[[\s\S]*?\]/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            // Filter out non-critical issues
+            issues = parsed.filter(
+              (issue) =>
+                issue.message &&
+                issue.message.length > 10 &&
+                !issue.message.toLowerCase().includes("comment") &&
+                !issue.message.toLowerCase().includes("naming") &&
+                !issue.message.toLowerCase().includes("style")
+            );
+          }
+        } catch (e) {
+          console.error("Parse error:", e);
+        }
+
+        if (issues.length === 0) {
+          vscode.window.showInformationMessage("✅ No critical issues found!");
+          return;
+        }
+
+        const diagnostics = issues.map((issue) => {
+          const line = Math.max(
+            0,
+            Math.min(
+              (issue.line || 1) - 1 + selection.start.line,
+              document.lineCount - 1
+            )
+          );
+          const range = document.lineAt(line).range;
+
+          let severity = vscode.DiagnosticSeverity.Warning;
+          if (issue.severity === "error")
+            severity = vscode.DiagnosticSeverity.Error;
+
+          const diag = new vscode.Diagnostic(
+            range,
+            `🤖 ${issue.message}`,
+            severity
+          );
+          diag.source = "AI Copilot";
+          return diag;
+        });
+
+        const existingDiagnostics = diagnosticCollection.get(document.uri) || [];
+        const allDiagnostics = [...existingDiagnostics, ...diagnostics];
+        diagnosticCollection.set(document.uri, allDiagnostics);
+
+        vscode.window.showInformationMessage(
+          `🔍 Found ${diagnostics.length} critical issue(s)`
+        );
+      } catch (error) {
+        vscode.window.showErrorMessage(
+          "❌ Review failed: " +
+            (error.response?.data?.error?.message || error.message)
+        );
+      }
+    }
+  );
+}
+
+/**
  * CodeActionProvider for AI-powered auto-fix
  */
 class AICodeFixProvider {
   provideCodeActions(document, range, context, token) {
     const codeActions = [];
 
-    // Check if there are diagnostics from AI Copilot
     context.diagnostics.forEach((diagnostic) => {
       if (diagnostic.source === "AI Copilot") {
         const fix = new vscode.CodeAction(
@@ -127,7 +316,10 @@ class AICodeFixProvider {
 }
 
 /**
- * Apply AI fix to code
+ * Apply AI fix to code - IMPROVED
+ */
+ /**
+ * Apply AI fix to code - FIXED REGEX
  */
 async function applyAIFix(document, diagnostic) {
   try {
@@ -135,23 +327,37 @@ async function applyAIFix(document, diagnostic) {
     if (!apiKey) return;
 
     const lineText = document.lineAt(diagnostic.range.start.line).text;
-    const context = document.getText(
-      new vscode.Range(
-        Math.max(0, diagnostic.range.start.line - 3),
-        0,
-        Math.min(document.lineCount - 1, diagnostic.range.start.line + 3),
-        0
-      )
+    const startLine = Math.max(0, diagnostic.range.start.line - 5);
+    const endLine = Math.min(
+      document.lineCount - 1,
+      diagnostic.range.start.line + 5
     );
 
-    const prompt = `Fix this code issue:
+    const context = document.getText(
+      new vscode.Range(startLine, 0, endLine, 0)
+    );
+
+    const language = document.languageId;
+
+    const prompt = `You are a code fixer. Fix ONLY the specific issue mentioned.
+
+Language: ${language}
 Issue: ${diagnostic.message}
 Problematic line: ${lineText}
 
 Context:
+\`\`\`${language}
 ${context}
+\`\`\`
 
-Return ONLY the fixed line of code, nothing else.`;
+RULES:
+1. Return ONLY the fixed line of code
+2. DO NOT add comments or explanations
+3. DO NOT change working code
+4. Keep the same indentation and style
+5. Fix ONLY the reported issue
+
+Fixed line:`;
 
     const response = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
@@ -159,14 +365,24 @@ Return ONLY the fixed line of code, nothing else.`;
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.1,
-          maxOutputTokens: 500,
+          maxOutputTokens: 300,
         },
       }
     );
 
-    let fixedCode = response.data.candidates[0].content.parts[0].text.trim();
-    // Remove markdown code blocks if present
-    fixedCode = fixedCode.replace(/``````/g, "");
+    let fixedCode = response.data.candidates.content.parts.text.trim();
+
+// Just remove all backticks and extra whitespace
+fixedCode = fixedCode
+  .split('```').join('')  // Remove all ```
+  .split('\n')
+  .filter(line => !line.match(/^[a-z]+$/)) // Remove language names
+  .join('\n')
+  .trim();
+
+    
+    // FIXED: Properly escaped regex patterns
+    
 
     const editor = vscode.window.activeTextEditor;
     if (editor && editor.document === document) {
@@ -174,8 +390,7 @@ Return ONLY the fixed line of code, nothing else.`;
         editBuilder.replace(diagnostic.range, fixedCode);
       });
       vscode.window.showInformationMessage("✨ AI fix applied!");
-      
-      // Clear the diagnostic after fixing
+
       const remainingDiagnostics = diagnosticCollection
         .get(document.uri)
         ?.filter((d) => d !== diagnostic);
@@ -183,7 +398,8 @@ Return ONLY the fixed line of code, nothing else.`;
     }
   } catch (error) {
     vscode.window.showErrorMessage(
-      "❌ Fix failed: " + (error.response?.data?.error?.message || error.message)
+      "❌ Fix failed: " +
+        (error.response?.data?.error?.message || error.message)
     );
   }
 }
@@ -500,7 +716,6 @@ class ChatViewProvider {
                 <button class="suggestion-btn" onclick="sendSuggestion('Review my current file')">
                     🔍 Review my current file
                 </button>
- 
                 <button class="suggestion-btn" onclick="sendSuggestion('Find bugs and security issues')">
                     🐛 Find bugs and security issues
                 </button>
@@ -588,9 +803,8 @@ class ChatViewProvider {
         }
 
         function formatMessage(text) {
-        
             return text.replace(/\`\`\`([\\s\\S]*?)\`\`\`/g, '<pre><code>$1</code></pre>')
-                      .replace(/\`([*\`]+)\`/g, '<code>$1</code>')
+                      .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
                       .replace(/\\n/g, '<br>');
         }
 
@@ -649,8 +863,6 @@ class ChatViewProvider {
                 <h3>👋 Hi! I'm your AI coding assistant</h3>
                 <p>Ask me anything about your code</p>
                 <div class="suggestions">
-                   
-                     
                     <button class="suggestion-btn" onclick="sendSuggestion('Find bugs and security issues')">
                         🐛 Find bugs and security issues
                     </button>
@@ -738,18 +950,15 @@ async function handleChatMessage(message, webview) {
     const editor = vscode.window.activeTextEditor;
     let fullPrompt = message;
 
-    // Add file context if available
     if (editor && editor.document) {
       const fileName = editor.document.fileName.split(/[\\/]/).pop();
       const language = editor.document.languageId;
       const selection = editor.selection;
 
-      // Check if there's a selection, otherwise use entire file
       const codeContext = !selection.isEmpty
         ? editor.document.getText(selection)
         : editor.document.getText();
 
-      // Add context to prompt
       fullPrompt = `I'm working on file: ${fileName} (Language: ${language})
 
 File Content:
@@ -760,7 +969,6 @@ ${codeContext}
 User Question: ${message}`;
     }
 
-    // Add to conversation history with full context
     conversationHistory.push({
       role: "user",
       parts: [{ text: fullPrompt }],
@@ -864,14 +1072,17 @@ async function reviewCode(document, code, startLine) {
               {
                 parts: [
                   {
-                    text: ` You are a strict JSON code reviewer. 
-    INSTRUCTIONS:
-    1. Identify bugs, security issues, and bad practices.
-    2. Your entire output MUST be a valid JSON array.
-    3. DO NOT use asterisks (*) or hashtags (#) anywhere in the text or JSON messages.
-    4. DO NOT include markdown code blocks like \`\`\`json.
-    5. Use plain, simple text for the "message" field
-                            . Return JSON: [{"line": number, "message": "text", "severity": "error"|"warning"|"info"}]\n\nReview:\n\n${code}`,
+                    text: `You are a strict JSON code reviewer. 
+INSTRUCTIONS:
+1. Identify bugs, security issues, and bad practices.
+2. Your entire output MUST be a valid JSON array.
+3. DO NOT use asterisks (*) or hashtags (#) anywhere in the text or JSON messages.
+4. DO NOT include markdown code blocks like \`\`\`json.
+5. Use plain, simple text for the "message" field. Return JSON: [{"line": number, "message": "text", "severity": "error"|"warning"|"info"}]
+
+Review:
+
+${code}`,
                   },
                 ],
               },
