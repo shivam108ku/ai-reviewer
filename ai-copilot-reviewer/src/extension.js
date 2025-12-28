@@ -1,4 +1,4 @@
- const vscode = require("vscode");
+const vscode = require("vscode");
 const axios = require("axios");
 
 // Global state
@@ -8,7 +8,7 @@ let outputChannel;
 let chatPanel;
 let conversationHistory = [];
 let currentStreamController = null;
-let codeLensProvider; // ✅ ADD THIS
+let codeLensProvider;
 
 function activate(context) {
   console.log("🤖 AI Copilot activated!");
@@ -26,10 +26,10 @@ function activate(context) {
   statusBarItem.command = "aiCopilotReviewer.openChat";
   statusBarItem.show();
 
-  // ✅ INITIALIZE CodeLens Provider
+  // Initialize CodeLens Provider
   codeLensProvider = new AIReviewCodeLensProvider();
   
-  // Register CodeLens Provider for selected code review
+  // Register CodeLens Provider
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider(
       { scheme: "file" },
@@ -37,10 +37,10 @@ function activate(context) {
     )
   );
 
-  // Register CodeActionProvider for auto-fix
+  // ✅ CRITICAL: Register CodeActionProvider with ALL selector
   context.subscriptions.push(
     vscode.languages.registerCodeActionsProvider(
-      { scheme: "file" },
+      "*", // ALL file types
       new AICodeFixProvider(),
       {
         providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
@@ -48,23 +48,20 @@ function activate(context) {
     )
   );
 
-  // ✅ FIXED - Listen to selection changes with debounce
+  // Listen to selection changes with debounce
   let selectionTimeout;
   context.subscriptions.push(
     vscode.window.onDidChangeTextEditorSelection((event) => {
-      // Clear previous timeout
       if (selectionTimeout) {
         clearTimeout(selectionTimeout);
       }
       
-      // Debounce to avoid too many updates
       selectionTimeout = setTimeout(() => {
         const selection = event.selections[0];
         if (!selection.isEmpty) {
-          // Trigger CodeLens refresh
           codeLensProvider._onDidChangeCodeLenses.fire();
         }
-      }, 100); // 100ms delay
+      }, 100);
     })
   );
 
@@ -137,7 +134,7 @@ function activate(context) {
 }
 
 /**
- * ✅ UPDATED - CodeLens Provider with proper event emitter
+ * CodeLens Provider
  */
 class AIReviewCodeLensProvider {
   constructor() {
@@ -165,16 +162,12 @@ class AIReviewCodeLensProvider {
 
     return [codeLens];
   }
-
-  // ✅ Optional: Add resolveCodeLens if needed
-  resolveCodeLens(codeLens, token) {
-    return codeLens;
-  }
 }
- 
-
 
 /**
+ * Quick review for selected code with inline diagnostics
+ */
+ /**
  * Quick review for selected code with inline diagnostics
  */
 async function quickReviewSelection(document, selection) {
@@ -220,16 +213,19 @@ CRITICAL RULES:
 3. DO NOT suggest improvements if code is functionally correct
 4. If code works correctly, return empty array []
 5. Be VERY strict - only critical issues
+6. DO NOT use asterisks (*), double asterisks (**), or hashtags (#) in your response
+7. DO NOT add any summary, overall impression, or conclusion
+8. ONLY return the JSON array - nothing else
 
 Code to review:
 \`\`\`${language}
 ${code}
 \`\`\`
 
-Return JSON format ONLY (no markdown):
+Return ONLY this JSON format (no extra text, no markdown, no summary):
 [{"line": number, "message": "brief description", "severity": "error"|"warning"}]
 
-If no critical issues found, return: []`,
+If no critical issues found, return exactly: []`,
                   },
                 ],
               },
@@ -237,6 +233,7 @@ If no critical issues found, return: []`,
             generationConfig: {
               temperature: 0.1,
               maxOutputTokens: 1500,
+              stopSequences: ["**", "##", "Overall"], // ✅ Stop at markdown
             },
           }
         );
@@ -245,6 +242,7 @@ If no critical issues found, return: []`,
         let issues = [];
 
         try {
+          // ✅ Extract only JSON array, ignore everything else
           const jsonMatch = aiResponse.match(/\[[\s\S]*?\]/);
           if (jsonMatch) {
             const parsed = JSON.parse(jsonMatch[0]);
@@ -254,7 +252,9 @@ If no critical issues found, return: []`,
                 issue.message.length > 10 &&
                 !issue.message.toLowerCase().includes("comment") &&
                 !issue.message.toLowerCase().includes("naming") &&
-                !issue.message.toLowerCase().includes("style")
+                !issue.message.toLowerCase().includes("style") &&
+                !issue.message.includes("*") && // ✅ Remove messages with *
+                !issue.message.includes("#")    // ✅ Remove messages with #
             );
           }
         } catch (e) {
@@ -274,27 +274,34 @@ If no critical issues found, return: []`,
               document.lineCount - 1
             )
           );
-          const range = document.lineAt(line).range;
+          const lineRange = document.lineAt(line).range;
 
-          let severity = vscode.DiagnosticSeverity.Warning;
-          if (issue.severity === "error")
-            severity = vscode.DiagnosticSeverity.Error;
+          let severity = vscode.DiagnosticSeverity.Error;
+          if (issue.severity === "warning")
+            severity = vscode.DiagnosticSeverity.Warning;
+
+          // ✅ Clean message - remove all markdown symbols
+          let cleanMessage = issue.message
+            .replace(/\*\*/g, '') // Remove **
+            .replace(/\*/g, '')   // Remove *
+            .replace(/##/g, '')   // Remove ##
+            .replace(/#/g, '')    // Remove #
+            .trim();
 
           const diag = new vscode.Diagnostic(
-            range,
-            `🤖 ${issue.message}`,
+            lineRange,
+            cleanMessage,
             severity
           );
           diag.source = "AI Copilot";
           return diag;
         });
 
-        const existingDiagnostics = diagnosticCollection.get(document.uri) || [];
-        const allDiagnostics = [...existingDiagnostics, ...diagnostics];
-        diagnosticCollection.set(document.uri, allDiagnostics);
+        diagnosticCollection.clear();
+        diagnosticCollection.set(document.uri, diagnostics);
 
         vscode.window.showInformationMessage(
-          `🔍 Found ${diagnostics.length} critical issue(s)`
+          `🔍 Found ${diagnostics.length} issue(s). Hover over red lines and press Ctrl+. to fix!`
         );
       } catch (error) {
         vscode.window.showErrorMessage(
@@ -306,28 +313,41 @@ If no critical issues found, return: []`,
   );
 }
 
+
 /**
- * CodeActionProvider for AI-powered auto-fix
+ * ✅ FIXED CodeActionProvider
  */
 class AICodeFixProvider {
   provideCodeActions(document, range, context, token) {
+    // ✅ Check if there are diagnostics
+    if (!context.diagnostics || context.diagnostics.length === 0) {
+      return [];
+    }
+
     const codeActions = [];
 
-    context.diagnostics.forEach((diagnostic) => {
-      if (diagnostic.source === "AI Copilot") {
-        const fix = new vscode.CodeAction(
-          "🤖 AI Auto-Fix",
-          vscode.CodeActionKind.QuickFix
-        );
-        fix.command = {
-          title: "Fix with AI",
-          command: "aiCopilotReviewer.applyAIFix",
-          arguments: [document, diagnostic],
-        };
-        fix.diagnostics = [diagnostic];
-        fix.isPreferred = true;
-        codeActions.push(fix);
-      }
+    // Filter only AI Copilot diagnostics
+    const aiDiagnostics = context.diagnostics.filter(
+      (diag) => diag.source === "AI Copilot"
+    );
+
+    // ✅ For each AI diagnostic, create a Quick Fix
+    aiDiagnostics.forEach((diagnostic) => {
+      const action = new vscode.CodeAction(
+        `🤖 Fix: ${diagnostic.message.substring(0, 50)}...`,
+        vscode.CodeActionKind.QuickFix
+      );
+
+      action.diagnostics = [diagnostic];
+      action.isPreferred = true;
+      
+      action.command = {
+        command: "aiCopilotReviewer.applyAIFix",
+        title: "Apply AI Fix",
+        arguments: [document, diagnostic],
+      };
+
+      codeActions.push(action);
     });
 
     return codeActions;
@@ -335,9 +355,9 @@ class AICodeFixProvider {
 }
 
 /**
- * Apply AI fix to code - IMPROVED AND FIXED
+ * Apply AI fix to code
  */
- async function applyAIFix(document, diagnostic) {
+async function applyAIFix(document, diagnostic) {
   try {
     const apiKey = await getApiKey();
     if (!apiKey) return;
@@ -376,43 +396,57 @@ RULES:
 
 Fixed line:`;
 
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
+    await vscode.window.withProgress(
       {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 300,
-        },
-      }
-    );
+        location: vscode.ProgressLocation.Notification,
+        title: "AI Copilot",
+        cancellable: false,
+      },
+      async (progress) => {
+        progress.report({ message: "🤖 Applying AI fix..." });
 
-    let fixedCode = response.data.candidates[0].content.parts[0].text.trim();
+        const response = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
+          {
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: 300,
+            },
+          }
+        );
 
-    // Clean up - Remove markdown code blocks
-     fixedCode = fixedCode
+        let fixedCode = response.data.candidates[0].content.parts[0].text.trim();
+
+        // Clean up markdown
+        // Clean up - Remove markdown code blocks
+    fixedCode = fixedCode
       .replace(/```[\w\s]*\n?/g, '')  // 1. Opening block (eg: ```javascript) remove karega
       .replace(/```/g, '')            // 2. Closing block (```) remove karega
       .split('\n')
       .map(line => line.trim())
-      .filter(line => {
-        return line && !(/^[a-z]+$/i.test(line));
-      })
-      .join('\n')
-      .trim();
+          .filter(line => {
+            return line && !(/^[a-z]+$/i.test(line));
+          })
+          .join('\n')
+          .trim();
 
-    const editor = vscode.window.activeTextEditor;
-    if (editor && editor.document === document) {
-      await editor.edit((editBuilder) => {
-        editBuilder.replace(diagnostic.range, fixedCode);
-      });
-      vscode.window.showInformationMessage("✨ AI fix applied!");
+        const editor = vscode.window.activeTextEditor;
+        if (editor && editor.document === document) {
+          await editor.edit((editBuilder) => {
+            editBuilder.replace(diagnostic.range, fixedCode);
+          });
+          
+          vscode.window.showInformationMessage("✨ AI fix applied!");
 
-      const remainingDiagnostics = diagnosticCollection
-        .get(document.uri)
-        ?.filter((d) => d !== diagnostic);
-      diagnosticCollection.set(document.uri, remainingDiagnostics || []);
-    }
+          // Remove the fixed diagnostic
+          const remainingDiagnostics = diagnosticCollection
+            .get(document.uri)
+            ?.filter((d) => d !== diagnostic);
+          diagnosticCollection.set(document.uri, remainingDiagnostics || []);
+        }
+      }
+    );
   } catch (error) {
     vscode.window.showErrorMessage(
       "❌ Fix failed: " +
@@ -420,7 +454,6 @@ Fixed line:`;
     );
   }
 }
-
 
 /**
  * Get API key from user input
@@ -755,201 +788,222 @@ class ChatViewProvider {
         <button class="stop-btn" id="stopBtn" onclick="stopStreaming()">⏹ Stop</button>
     </div>
 
-    <script>
-        const vscode = acquireVsCodeApi();
-        const chatContainer = document.getElementById('chatContainer');
-        const messageInput = document.getElementById('messageInput');
-        const sendBtn = document.getElementById('sendBtn');
-        const stopBtn = document.getElementById('stopBtn');
-        let isStreaming = false;
+     <script>
+    const vscode = acquireVsCodeApi();
+    const chatContainer = document.getElementById('chatContainer');
+    const messageInput = document.getElementById('messageInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    let isStreaming = false;
 
-        messageInput.addEventListener('input', function() {
-            this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-        });
+    messageInput.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+    });
 
-        messageInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-
-        function sendMessage() {
-            const message = messageInput.value.trim();
-            if (!message || isStreaming) return;
-
-            addMessage(message, 'user');
-            messageInput.value = '';
-            messageInput.style.height = 'auto';
-            
-            sendBtn.disabled = true;
-            sendBtn.style.display = 'none';
-            stopBtn.classList.add('active');
-            isStreaming = true;
-
-            vscode.postMessage({ type: 'sendMessage', message });
-            showLoading();
-        }
-
-        function stopStreaming() {
-            vscode.postMessage({ type: 'stopStream' });
-            stopBtn.classList.remove('active');
-            sendBtn.style.display = 'block';
-            sendBtn.disabled = false;
-            isStreaming = false;
-            removeLoading();
-        }
-
-        function sendSuggestion(text) {
-            const emptyState = chatContainer.querySelector('.empty-state');
-            if (emptyState) emptyState.remove();
-            
-            messageInput.value = text;
+    messageInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
             sendMessage();
         }
+    });
 
-        function addMessage(text, type) {
-            const emptyState = chatContainer.querySelector('.empty-state');
-            if (emptyState) emptyState.remove();
+    function sendMessage() {
+        const message = messageInput.value.trim();
+        if (!message || isStreaming) return;
 
-            const messageDiv = document.createElement('div');
-            messageDiv.className = \`message \${type}-message\`;
-            messageDiv.innerHTML = formatMessage(text);
-            chatContainer.appendChild(messageDiv);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
+        addMessage(message, 'user');
+        messageInput.value = '';
+        messageInput.style.height = 'auto';
+        
+        sendBtn.disabled = true;
+        sendBtn.style.display = 'none';
+        stopBtn.classList.add('active');
+        isStreaming = true;
+
+        vscode.postMessage({ type: 'sendMessage', message });
+        showLoading();
+    }
+
+    function stopStreaming() {
+        vscode.postMessage({ type: 'stopStream' });
+        stopBtn.classList.remove('active');
+        sendBtn.style.display = 'block';
+        sendBtn.disabled = false;
+        isStreaming = false;
+        removeLoading();
+    }
+
+    function sendSuggestion(text) {
+        const emptyState = chatContainer.querySelector('.empty-state');
+        if (emptyState) emptyState.remove();
+        
+        messageInput.value = text;
+        sendMessage();
+    }
+
+    function addMessage(text, type) {
+        const emptyState = chatContainer.querySelector('.empty-state');
+        if (emptyState) emptyState.remove();
+
+        const messageDiv = document.createElement('div');
+        messageDiv.className = \`message \${type}-message\`;
+        messageDiv.innerHTML = formatMessage(text);
+        chatContainer.appendChild(messageDiv);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    function formatMessage(text) {
+        return text.replace(/\`\`\`([\\s\\S]*?)\`\`\`/g, '<pre><code>$1</code></pre>')
+                  .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
+                  .replace(/\\n/g, '<br>');
+    }
+
+    function showLoading() {
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'message ai-message';
+        loadingDiv.id = 'loading';
+        loadingDiv.innerHTML = '<div class="loading"><span></span><span></span><span></span></div>';
+        chatContainer.appendChild(loadingDiv);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    function removeLoading() {
+        const loading = document.getElementById('loading');
+        if (loading) loading.remove();
+    }
+
+    let currentTypingDiv = null;
+
+    function typeMessage(text, callback) {
+        const emptyState = chatContainer.querySelector('.empty-state');
+        if (emptyState) emptyState.remove();
+
+        currentTypingDiv = document.createElement('div');
+        currentTypingDiv.className = 'message ai-message';
+        currentTypingDiv.innerHTML = '<span class="typing-indicator"></span>';
+        chatContainer.appendChild(currentTypingDiv);
+
+        const typingSpan = currentTypingDiv.querySelector('.typing-indicator');
+        let index = 0;
+        let displayText = '';
+
+        function typeChar() {
+            if (index < text.length && isStreaming) {
+                displayText += text[index];
+                typingSpan.innerHTML = formatMessage(displayText);
+                index++;
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+                setTimeout(typeChar, 20);
+            } else {
+                // ✅ Typing complete - reset UI
+                currentTypingDiv = null;
+                isStreaming = false;
+                sendBtn.disabled = false;
+                sendBtn.style.display = 'block';
+                stopBtn.classList.remove('active');
+                
+                if (callback) callback();
+            }
         }
 
-        function formatMessage(text) {
-            return text.replace(/\`\`\`([\\s\\S]*?)\`\`\`/g, '<pre><code>$1</code></pre>')
-                      .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
-                      .replace(/\\n/g, '<br>');
-        }
+        typeChar();
+    }
 
-        function showLoading() {
-            const loadingDiv = document.createElement('div');
-            loadingDiv.className = 'message ai-message';
-            loadingDiv.id = 'loading';
-            loadingDiv.innerHTML = '<div class="loading"><span></span><span></span><span></span></div>';
-            chatContainer.appendChild(loadingDiv);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
+    function clearChat() {
+        vscode.postMessage({ type: 'clearChat' });
+        chatContainer.innerHTML = '';
+        const emptyState = document.createElement('div');
+        emptyState.className = 'empty-state';
+        emptyState.innerHTML = \`
+            <h3>👋 Hi! I'm your AI coding assistant</h3>
+            <p>Ask me anything about your code</p>
+            <div class="suggestions">
+                <button class="suggestion-btn" onclick="sendSuggestion('Review my current file')">
+                    🔍 Review my current file
+                </button>
+                <button class="suggestion-btn" onclick="sendSuggestion('Find bugs and security issues')">
+                    🐛 Find bugs and security issues
+                </button>
+                <button class="suggestion-btn" onclick="sendSuggestion('Generate unit tests')">
+                    🧪 Generate unit tests
+                </button>
+            </div>
+        \`;
+        chatContainer.appendChild(emptyState);
+    }
 
-        function removeLoading() {
-            const loading = document.getElementById('loading');
-            if (loading) loading.remove();
-        }
-
-        let currentTypingDiv = null;
-
-        function typeMessage(text, callback) {
-            const emptyState = chatContainer.querySelector('.empty-state');
-            if (emptyState) emptyState.remove();
-
-            currentTypingDiv = document.createElement('div');
-            currentTypingDiv.className = 'message ai-message';
-            currentTypingDiv.innerHTML = '<span class="typing-indicator"></span>';
-            chatContainer.appendChild(currentTypingDiv);
-
-            const typingSpan = currentTypingDiv.querySelector('.typing-indicator');
-            let index = 0;
-            let displayText = '';
-
-            function typeChar() {
-                if (index < text.length && isStreaming) {
-                    displayText += text[index];
-                    typingSpan.innerHTML = formatMessage(displayText);
-                    index++;
-                    chatContainer.scrollTop = chatContainer.scrollHeight;
-                    setTimeout(typeChar, 20);
-                } else {
-                    currentTypingDiv = null;
-                    if (callback) callback();
+    window.addEventListener('message', event => {
+        const message = event.data;
+        switch (message.type) {
+            case 'aiResponse':
+                removeLoading();
+                isStreaming = true;
+                typeMessage(message.text, () => {
+                    isStreaming = false;
+                    sendBtn.disabled = false;
+                    sendBtn.style.display = 'block';
+                    stopBtn.classList.remove('active');
+                });
+                break;
+                
+            case 'aiStreamChunk':
+                removeLoading();
+                if (!currentTypingDiv) {
+                    currentTypingDiv = document.createElement('div');
+                    currentTypingDiv.className = 'message ai-message';
+                    currentTypingDiv.innerHTML = '<span class="typing-indicator"></span>';
+                    chatContainer.appendChild(currentTypingDiv);
                 }
-            }
-
-            typeChar();
-        }
-
-        function clearChat() {
-            vscode.postMessage({ type: 'clearChat' });
-            chatContainer.innerHTML = '';
-            const emptyState = document.createElement('div');
-            emptyState.className = 'empty-state';
-            emptyState.innerHTML = \`
-                <h3>👋 Hi! I'm your AI coding assistant</h3>
-                <p>Ask me anything about your code</p>
-                <div class="suggestions">
-                    <button class="suggestion-btn" onclick="sendSuggestion('Review my current file')">
-                        🔍 Review my current file
-                    </button>
-                    <button class="suggestion-btn" onclick="sendSuggestion('Find bugs and security issues')">
-                        🐛 Find bugs and security issues
-                    </button>
-                    <button class="suggestion-btn" onclick="sendSuggestion('Generate unit tests')">
-                        🧪 Generate unit tests
-                    </button>
-                </div>
-            \`;
-            chatContainer.appendChild(emptyState);
-        }
-
-        window.addEventListener('message', event => {
-            const message = event.data;
-            switch (message.type) {
-                case 'aiResponse':
-                    removeLoading();
-                    typeMessage(message.text);
-                    break;
-                case 'aiStreamChunk':
-                    removeLoading();
-                    if (!currentTypingDiv) {
-                        currentTypingDiv = document.createElement('div');
-                        currentTypingDiv.className = 'message ai-message';
-                        currentTypingDiv.innerHTML = '<span class="typing-indicator"></span>';
-                        chatContainer.appendChild(currentTypingDiv);
-                    }
+                const span = currentTypingDiv.querySelector('.typing-indicator');
+                span.innerHTML = formatMessage(message.text);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+                break;
+                
+            case 'aiStreamEnd':
+                currentTypingDiv = null;
+                sendBtn.disabled = false;
+                sendBtn.style.display = 'block';
+                stopBtn.classList.remove('active');
+                isStreaming = false;
+                break;
+                
+            case 'streamStopped':
+                if (currentTypingDiv) {
                     const span = currentTypingDiv.querySelector('.typing-indicator');
-                    span.innerHTML = formatMessage(message.text);
-                    chatContainer.scrollTop = chatContainer.scrollHeight;
-                    break;
-                case 'aiStreamEnd':
-                    currentTypingDiv = null;
-                    sendBtn.disabled = false;
-                    sendBtn.style.display = 'block';
-                    stopBtn.classList.remove('active');
-                    isStreaming = false;
-                    break;
-                case 'streamStopped':
-                    if (currentTypingDiv) {
-                        const span = currentTypingDiv.querySelector('.typing-indicator');
-                        span.innerHTML += formatMessage(message.text);
-                    }
-                    currentTypingDiv = null;
-                    sendBtn.disabled = false;
-                    sendBtn.style.display = 'block';
-                    stopBtn.classList.remove('active');
-                    isStreaming = false;
-                    break;
-                case 'error':
-                    removeLoading();
-                    addMessage('❌ ' + message.text, 'ai');
-                    sendBtn.disabled = false;
-                    sendBtn.style.display = 'block';
-                    stopBtn.classList.remove('active');
-                    isStreaming = false;
-                    break;
-                case 'clearChat':
-                    break;
-            }
-        });
-    </script>
+                    span.innerHTML += formatMessage(message.text);
+                }
+                currentTypingDiv = null;
+                sendBtn.disabled = false;
+                sendBtn.style.display = 'block';
+                stopBtn.classList.remove('active');
+                isStreaming = false;
+                break;
+                
+            case 'error':
+                removeLoading();
+                addMessage('❌ ' + message.text, 'ai');
+                sendBtn.disabled = false;
+                sendBtn.style.display = 'block';
+                stopBtn.classList.remove('active');
+                isStreaming = false;
+                break;
+                
+            case 'clearChat':
+                break;
+        }
+    });
+</script>
+
 </body>
 </html>`;
   }
 }
 
 /**
+ * Handle chat messages
+ */
+ /**
  * Handle chat messages with Gemini API
  */
 async function handleChatMessage(message, webview) {
@@ -959,7 +1013,7 @@ async function handleChatMessage(message, webview) {
     if (!apiKey) {
       webview.postMessage({
         type: "error",
-        text: "API Key not set! Please provide your Gemini API key.",
+        text: "API Key not set!",
       });
       return;
     }
@@ -983,7 +1037,13 @@ File Content:
 ${codeContext}
 \`\`\`
 
-User Question: ${message}`;
+User Question: ${message}
+
+IMPORTANT: Provide a clear, concise answer. Use plain formatting without excessive markdown symbols like ** or ##. Keep your response professional and to the point.`;
+    } else {
+      fullPrompt = `${message}
+
+IMPORTANT: Provide a clear, concise answer. Use plain formatting without excessive markdown symbols like ** or ##. Keep your response professional and to the point.`;
     }
 
     conversationHistory.push({
@@ -1005,7 +1065,16 @@ User Question: ${message}`;
       }
     );
 
-    const aiText = response.data.candidates[0].content.parts[0].text;
+    let aiText = response.data.candidates[0].content.parts[0].text;
+    
+    // ✅ Clean up markdown formatting for better readability
+    aiText = aiText
+      .replace(/\*\*([^*]+)\*\*/g, '$1')  // Remove ** bold **
+      .replace(/\*([^*]+)\*/g, '$1')      // Remove * italic *
+      .replace(/^#{1,6}\s+/gm, '')        // Remove # headers
+      .replace(/^[*-]\s+/gm, '• ')        // Convert * or - to bullet •
+      .trim();
+    
     conversationHistory.push({ role: "assistant", parts: [{ text: aiText }] });
 
     webview.postMessage({ type: "aiResponse", text: aiText });
@@ -1013,14 +1082,13 @@ User Question: ${message}`;
     console.error("Gemini API Error:", error.response?.data || error.message);
     webview.postMessage({
       type: "error",
-      text:
-        "AI request failed: " +
-        (error.response?.data?.error?.message || error.message),
+      text: "Request failed: " + error.message,
     });
   }
 }
 
-function openChatPanel(context) {
+
+function openChatPanel() {
   vscode.commands.executeCommand("workbench.view.extension.ai-copilot-panel");
 }
 
@@ -1093,9 +1161,9 @@ async function reviewCode(document, code, startLine) {
 INSTRUCTIONS:
 1. Identify bugs, security issues, and bad practices.
 2. Your entire output MUST be a valid JSON array.
-3. DO NOT use asterisks (*) or hashtags (#) anywhere in the text or JSON messages.
+3. DO NOT use asterisks or hashtags.
 4. DO NOT include markdown code blocks.
-5. Use plain, simple text for the "message" field.
+5. Use plain text for the "message" field.
 
 Return JSON: [{"line": number, "message": "text", "severity": "error"|"warning"|"info"}]
 
@@ -1155,10 +1223,7 @@ ${code}`,
           );
         }
       } catch (error) {
-        vscode.window.showErrorMessage(
-          "❌ Review failed: " +
-            (error.response?.data?.error?.message || error.message)
-        );
+        vscode.window.showErrorMessage("❌ Review failed: " + error.message);
       }
     }
   );
@@ -1258,11 +1323,7 @@ async function callAI(prompt) {
     const response = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
       {
-        contents: [
-          {
-            parts: [{ text: prompt }],
-          },
-        ],
+        contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.3,
           maxOutputTokens: 1000,
@@ -1272,10 +1333,7 @@ async function callAI(prompt) {
 
     return response.data.candidates[0].content.parts[0].text;
   } catch (error) {
-    vscode.window.showErrorMessage(
-      "❌ AI request failed: " +
-        (error.response?.data?.error?.message || error.message)
-    );
+    vscode.window.showErrorMessage("❌ AI request failed: " + error.message);
     return null;
   }
 }
