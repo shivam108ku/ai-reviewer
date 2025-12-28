@@ -1,13 +1,23 @@
 {
   "name": "ai-copilot-reviewer",
   "displayName": "AI Copilot Reviewer",
-  "description": "AI-powered code reviewer and chat assistant",
-  "version": "1.0.0",
+  "description": "AI-powered code review assistant using Google Gemini API",
+  "version": "0.0.1",
+  "publisher": "shivam108ku",
   "engines": {
     "vscode": "^1.60.0"
   },
   "categories": [
-    "Other"
+    "Programming Languages",
+    "Linters",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "ai",
+    "code-review",
+    "gemini",
+    "copilot",
+    "assistant"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -92,12 +102,7 @@
         "aiCopilotReviewer.apiKey": {
           "type": "string",
           "default": "",
-          "description": "DeepSeek API Key"
-        },
-        "aiCopilotReviewer.model": {
-          "type": "string",
-          "default": "deepseek-chat",
-          "description": "AI Model to use"
+          "description": "Google Gemini API Key"
         },
         "aiCopilotReviewer.reviewOnSave": {
           "type": "boolean",
@@ -108,6 +113,7 @@
     }
   },
   "scripts": {
+    "package": "vsce package",
     "lint": "eslint .",
     "pretest": "npm run lint",
     "test": "node ./test/runTest.js"
@@ -115,10 +121,18 @@
   "devDependencies": {
     "@types/vscode": "^1.60.0",
     "@types/node": "^16.x",
+    "@vscode/vsce": "^2.22.0",
     "eslint": "^8.x"
   },
   "dependencies": {
-    "axios": "^1.6.0",
-    "dotenv": "^16.0.0"
-  }
+    "axios": "^1.6.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shivam108ku/ai-reviewer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/shivam108ku/ai-reviewer/issues"
+  },
+  "license": "MIT"
 }
