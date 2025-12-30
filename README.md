@@ -66,4 +66,5 @@ A new VS Code window will open with the extension loaded.
 
 - VS Code 1.80.0 or higher
 - Node.js 16+ (for development)
-- Google Gemini API key (free tier available)
+- Google Gemini API key (free tier available to use)
+- 
