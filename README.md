@@ -17,7 +17,7 @@ AI-powered code review assistant for VS Code using Google Gemini API.
 - ♻️ Smart code refactoring
 - ✨ Fix code issues with AI suggestions
 
-## 🚀 Installation
+## 🚀 Installations
 
 ### Clone and Run
 
