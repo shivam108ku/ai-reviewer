@@ -35,7 +35,7 @@ text
 
 A new VS Code window will open with the extension loaded.
 
-## 🔑 Setup API Key
+## 🔑 Setup API Key.
 
 1. Get your **FREE** Google Gemini API key from: https://aistudio.google.com/
 2. Click "Get API Key" → "Create API Key"
