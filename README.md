@@ -9,7 +9,7 @@ AI-powered code review assistant for VS Code using Google Gemini API.
 - https://ai-code-reviewers.netlify.app/
 
 
-## ✨ Features
+## ✨ Feature
 
 - 💬 Interactive AI chat for code questions
 - 🔍 Automatic code review and bug detection
